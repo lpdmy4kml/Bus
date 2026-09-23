@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>香港巴士即時到站與附近路線 App</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        kmb: '#E31B23',
+                        citybus: '#FFE100',
+                        gmb: '#008738',
+                        appbg: '#F3F4F6'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Vue 3 CDN -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Leaflet CSS & JS for Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #CBD5E1;
+            border-radius: 4px;
+        }
+        #map {
+            height: calc(100vh - 180px);
+            min-height: 350px;
+            width: 100%;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-100 font-sans antialiased transition-colors duration-200">
+
+<div id="app" class="max-w-md mx-auto min-h-screen bg-white dark:bg-gray-800 shadow-2xl flex flex-col relative overflow-hidden">
+
+    <!-- App Header -->
+    <header class="bg-slate-900 text-white p-4 flex flex-col gap-2 shadow-md z-20">
+        <div class="flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <div class="bg-red-600 text-white font-bold p-1.5 rounded-lg text-xs tracking-wider">HK BUS</div>
+                <h1 class="font-bold text-lg tracking-wide">巴士即時到站</h1>
+            </div>
+            <div class="flex items-center space-x-2">
+                <!-- Dark Mode Toggle -->
+                <button @click="toggleDarkMode" class="p-2 rounded-full hover:bg-slate-800 text-gray-300">
+                    <i :data-lucide="isDark ? 'sun' : 'moon'" class="w-5 h-5"></i>
+                </button>
+                <!-- Refresh Button -->
+                <button @click="refreshETA" class="p-2 rounded-full hover:bg-slate-800 text-emerald-400 active:scale-95 transition">
+                    <i data-lucide="refresh-cw" class="w-5 h-5" :class="{'animate-spin': isRefreshing}"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Location Picker / Search bar -->
+        <div class="flex items-center bg-slate-800 rounded-xl px-3 py-2 text-sm text-gray-200 gap-2 border border-slate-700">
+            <i data-lucide="map-pin" class="w-4 h-4 text-red-500 shrink-0"></i>
+            <span class="text-xs text-gray-400 shrink-0">位置:</span>
+            <select v-model="selectedPresetLocationIndex" @change="changeLocation" class="bg-transparent text-white font-medium focus:outline-none flex-1 cursor-pointer truncate">
+                <option value="user" class="bg-slate-800 text-emerald-400 font-bold" v-if="userCustomLocation">
+                    📍 當前 GPS 位置 ({{ userCustomLocation.lat.toFixed(4) }}, {{ userCustomLocation.lng.toFixed(4) }})
+                </option>
+                <option v-for="(loc, index) in presetLocations" :key="index" :value="index" class="bg-slate-800 text-white">
+                    {{ loc.name }}
+                </option>
+            </select>
+            <!-- Real GPS Trigger Button -->
+            <button @click="getUserLocation" title="取得當前 GPS 位置" class="p-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-emerald-400 active:scale-95 transition flex items-center gap-1 text-xs shrink-0">
+                <i data-lucide="crosshair" class="w-4 h-4" :class="{'animate-spin': isLocating}"></i>
+            </button>
+            <span :class="gpsStatusClass" class="text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0">
+                {{ gpsStatusText }}
+            </span>
+        </div>
+    </header>
+
+    <!-- Top Alert Banner -->
+    <div v-if="trafficAlert" class="bg-amber-500/10 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 px-3 py-2 text-xs flex items-center justify-between">
+        <div class="flex items-center gap-2 truncate">
+            <i data-lucide="alert-triangle" class="w-4 h-4 shrink-0 text-amber-500"></i>
+            <span class="truncate">{{ trafficAlert }}</span>
+        </div>
+        <button @click="trafficAlert = ''" class="text-amber-500 hover:opacity-80 ml-1">✕</button>
+    </div>
+
+    <!-- Mode Selector & Filter Toolbar -->
+    <div class="bg-gray-50 dark:bg-gray-800/90 border-b dark:border-gray-700 p-2 flex flex-col gap-2 z-10">
+        <div class="flex items-center justify-between">
+            <!-- View Mode Switch (List vs Map) -->
+            <div class="bg-gray-200 dark:bg-gray-700 p-1 rounded-lg flex text-xs font-semibold">
+                <button @click="viewMode = 'list'" :class="viewMode === 'list' ? 'bg-white dark:bg-gray-900 text-slate-900 dark:text-white shadow' : 'text-gray-500'" class="px-3 py-1 rounded-md transition flex items-center gap-1">
+                    <i data-lucide="list" class="w-3.5 h-3.5"></i> 列表
+                </button>
+                <button @click="switchMode('map')" :class="viewMode === 'map' ? 'bg-white dark:bg-gray-900 text-slate-900 dark:text-white shadow' : 'text-gray-500'" class="px-3 py-1 rounded-md transition flex items-center gap-1">
+                    <i data-lucide="map" class="w-3.5 h-3.5"></i> 地圖
+                </button>
+            </div>
+
+            <!-- Operator Filter Pill -->
+            <div class="flex gap-1">
+                <button v-for="op in operators" :key="op.id" @click="selectedOp = op.id" 
+                    :class="selectedOp === op.id ? op.activeClass : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300'"
+                    class="px-2.5 py-1 rounded-md text-xs font-semibold transition">
+                    {{ op.label }}
+                </button>
+            </div>
+        </div>
+
+        <!-- Quick Filter Input -->
+        <div v-if="currentTab === 'nearby'" class="relative">
+            <input type="text" v-model="searchQuery" placeholder="搜尋路線或目的地 (例如: 102, 往中環)..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <i data-lucide="search" class="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5"></i>
+            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-2.5 top-2 text-xs text-gray-400">✕</button>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT AREA -->
+    <main class="flex-1 overflow-y-auto custom-scrollbar relative">
+
+        <!-- TAB 1: NEARBY BUS STOPS (LIST MODE) -->
+        <div v-if="currentTab === 'nearby' && viewMode === 'list'" class="p-3 space-y-4">
+            <div v-if="filteredStops.length === 0" class="text-center py-10 text-gray-400 text-sm">
+                沒有找到符合搜尋條的路線或車站。
+            </div>
+
+            <div v-for="stop in filteredStops" :key="stop.id" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700/80 shadow-sm overflow-hidden">
+                <!-- Stop Header -->
+                <div class="bg-slate-100 dark:bg-slate-800/80 px-3 py-2 border-b dark:border-gray-700 flex justify-between items-center">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                        <h3 class="font-bold text-sm text-slate-800 dark:text-slate-100">{{ stop.name }}</h3>
+                    </div>
+                    <span class="text-[11px] text-gray-500 font-mono flex items-center gap-1">
+                        <i data-lucide="navigation" class="w-3 h-3 text-blue-500"></i> {{ stop.distance }}m (約步行 {{ Math.ceil(stop.distance/80) }} 分鐘)
+                    </span>
+                </div>
+
+                <!-- Bus Routes at this Stop -->
+                <div class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                    <div v-for="route in stop.routes" :key="route.code" class="p-3 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition">
+                        <div class="flex items-center justify-between">
+                            
+                            <!-- Left: Operator Badge & Route Number -->
+                            <div class="flex items-center gap-2.5 cursor-pointer" @click="openRouteDetail(route, stop)">
+                                <span class="px-2 py-0.5 rounded text-[11px] font-black tracking-wide text-white shadow-xs" :class="getOpColor(route.operator)">
+                                    {{ route.operator }}
+                                </span>
+                                <div>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-lg font-black tracking-tight text-slate-900 dark:text-white">{{ route.code }}</span>
+                                        <span class="text-xs text-gray-500 dark:text-gray-400">往 {{ route.dest }}</span>
+                                    </div>
+                                    <div class="flex items-center gap-2 text-[10px] text-gray-400 mt-0.5">
+                                        <span v-if="route.wheelchair" class="flex items-center text-blue-500" title="低地台無障礙巴士">♿</span>
+                                        <span v-if="route.crowd" :class="getCrowdColor(route.crowd)" class="px-1 rounded text-[9px] font-medium">
+                                            {{ route.crowd }}
+                                        </span>
+                                        <span>全程 ${{ route.fare.toFixed(1) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Right: Real-time ETA Cards & Favorite -->
+                            <div class="flex items-center gap-2">
+                                <!-- Favorite Toggle -->
+                                <button @click.stop="toggleFavorite(route, stop)" class="text-gray-300 hover:text-amber-400 p-1">
+                                    <i data-lucide="star" class="w-4 h-4" :class="{'fill-amber-400 text-amber-400': isFavorite(route.code, stop.id)}"></i>
+                                </button>
+
+                                <!-- Next ETAs -->
+                                <div class="flex items-center gap-1.5">
+                                    <div v-for="(eta, idx) in route.etas" :key="idx" 
+                                        :class="idx === 0 ? 'bg-emerald-600 text-white ring-2 ring-emerald-500/30' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                                        class="px-2.5 py-1 rounded-lg text-center font-mono">
+                                        <div class="text-xs font-bold">{{ eta.time }}</div>
+                                        <div v-if="eta.min !== null" class="text-[9px] opacity-80">{{ eta.min }}分</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 1 (MAP VIEW) -->
+        <div v-show="currentTab === 'nearby' && viewMode === 'map'" class="relative">
+            <div id="map"></div>
+            <div class="absolute bottom-3 left-3 right-3 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md p-3 rounded-xl shadow-lg z-[1000] text-xs flex justify-between items-center border border-gray-200 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></span>
+                    <span class="font-semibold">藍點為你當前位置</span>
+                </div>
+                <span class="text-gray-500">點擊地圖上的站牌查看到站時間</span>
+            </div>
+        </div>
+
+        <!-- TAB 2: FAVORITES -->
+        <div v-if="currentTab === 'favorites'" class="p-3 space-y-3">
+            <h2 class="font-bold text-sm text-gray-500 dark:text-gray-400 px-1 uppercase tracking-wider">我的收藏路線</h2>
+            
+            <div v-if="favorites.length === 0" class="text-center py-12 text-gray-400">
+                <i data-lucide="bookmark" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+                <p class="text-sm">暫未收藏任何路線。</p>
+                <p class="text-xs text-gray-400 mt-1">喺附近路線點擊 ⭐️ 圖示即可加入常用！</p>
+            </div>
+
+            <div v-for="fav in favorites" :key="fav.code + fav.stopId" class="bg-white dark:bg-gray-800 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex items-center justify-between">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-black text-white" :class="getOpColor(fav.operator)">{{ fav.operator }}</span>
+                        <span class="font-black text-lg text-slate-900 dark:text-white">{{ fav.code }}</span>
+                        <span class="text-xs text-gray-500">往 {{ fav.dest }}</span>
+                    </div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1">
+                        <i data-lucide="map-pin" class="w-3 h-3 text-red-500"></i> {{ fav.stopName }}
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <div class="bg-emerald-600 text-white font-mono px-3 py-1.5 rounded-xl text-center">
+                        <div class="text-xs font-bold">{{ fav.etas[0]?.time }}</div>
+                        <div class="text-[10px]">{{ fav.etas[0]?.min }}分鐘</div>
+                    </div>
+                    <button @click="toggleFavorite(fav, {id: fav.stopId})" class="text-amber-400 p-1 hover:text-gray-400">
+                        <i data-lucide="star" class="w-5 h-5 fill-amber-400"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 3: SMART ROUTE PLANNER / SEARCH -->
+        <div v-if="currentTab === 'planner'" class="p-4 space-y-4">
+            <div class="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-3">
+                <h2 class="font-bold text-sm text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                    <i data-lucide="navigation" class="w-4 h-4 text-emerald-500"></i> 點對點巴士搜尋
+                </h2>
+                <div class="space-y-2 text-xs">
+                    <div>
+                        <label class="text-gray-400">起點:</label>
+                        <input type="text" readonly :value="presetLocations[selectedPresetLocationIndex].name" class="w-full p-2 bg-gray-100 dark:bg-gray-700 rounded-lg font-medium text-gray-700 dark:text-gray-200">
+                    </div>
+                    <div>
+                        <label class="text-gray-400">目的地:</label>
+                        <select v-model="destinationTarget" class="w-full p-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-800 dark:text-gray-100 font-medium">
+                            <option value="美孚 / 荔枝角">美孚 / 荔枝角</option>
+                            <option value="堅尼地城 / 西環">堅尼地城 / 西環</option>
+                            <option value="觀塘市中心">觀塘市中心</option>
+                            <option value="將軍澳康城">將軍澳康城</option>
+                        </select>
+                    </div>
+                    <button @click="simulatePlan" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg shadow transition flex items-center justify-center gap-2">
+                        <i data-lucide="search" class="w-4 h-4"></i> 智能路線推薦
+                    </button>
+                </div>
+            </div>
+
+            <!-- Planning Results -->
+            <div v-if="planResult" class="space-y-3">
+                <h3 class="text-xs font-bold text-gray-400">推薦搭乘方案:</h3>
+                <div v-for="(res, index) in planResult" :key="index" class="bg-white dark:bg-gray-800 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+                    <div class="flex justify-between items-start">
+                        <div class="flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded text-xs font-black text-white" :class="getOpColor(res.operator)">{{ res.operator }}</span>
+                            <span class="text-lg font-black text-slate-900 dark:text-white">{{ res.code }}</span>
+                            <span class="text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">{{ res.tag }}</span>
+                        </div>
+                        <span class="font-bold text-emerald-600 dark:text-emerald-400 text-sm">${{ res.fare.toFixed(1) }}</span>
+                    </div>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">約 {{ res.duration }} 分鐘到到達 | 下班車: <span class="font-bold text-slate-800 dark:text-slate-100">{{ res.nextEta }}</span></p>
+                    <p class="text-[11px] text-amber-600 dark:text-amber-400 mt-1" v-if="res.discount">💡 八達通轉乘優惠：{{ res.discount }}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 4: TRAFFIC ALERTS -->
+        <div v-if="currentTab === 'alerts'" class="p-4 space-y-3">
+            <h2 class="font-bold text-sm text-gray-500 dark:text-gray-400 px-1 uppercase tracking-wider">實時交通與改道消息</h2>
+            
+            <div v-for="ann in announcements" :key="ann.id" class="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-2">
+                <div class="flex justify-between items-center text-xs text-gray-400">
+                    <span class="px-2 py-0.5 rounded font-semibold text-white bg-slate-700">{{ ann.source }}</span>
+                    <span>{{ ann.time }}</span>
+                </div>
+                <h3 class="font-bold text-sm text-slate-800 dark:text-slate-100">{{ ann.title }}</h3>
+                <p class="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">{{ ann.content }}</p>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- ROUTE DETAIL DRAWER / MODAL -->
+    <div v-if="activeRoute" class="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex flex-col justify-end transition-opacity">
+        <div class="bg-white dark:bg-gray-800 rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-200">
+            <!-- Modal Header -->
+            <div class="p-4 border-b dark:border-gray-700 flex justify-between items-center bg-slate-900 text-white rounded-t-2xl">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="px-2 py-0.5 rounded text-xs font-black text-white" :class="getOpColor(activeRoute.operator)">{{ activeRoute.operator }}</span>
+                        <span class="text-2xl font-black tracking-tight">{{ activeRoute.code }}</span>
+                        <span class="text-xs text-gray-300">往 {{ activeRoute.dest }}</span>
+                    </div>
+                    <p class="text-xs text-gray-400 mt-0.5">全程車費: ${{ activeRoute.fare.toFixed(1) }}</p>
+                </div>
+                <button @click="activeRoute = null" class="p-1 rounded-full hover:bg-slate-800 text-gray-400 hover:text-white">✕</button>
+            </div>
+
+            <!-- Get-off Alarm Switch Banner -->
+            <div class="bg-emerald-500/10 border-b border-emerald-500/20 p-3 flex items-center justify-between text-xs">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="bell" class="w-4 h-4 text-emerald-500"></i>
+                    <div>
+                        <div class="font-bold text-emerald-600 dark:text-emerald-400">落車警示提醒</div>
+                        <div class="text-[10px] text-gray-500">巴士到達指定車站前 1 站發出震動提示</div>
+                    </div>
+                </div>
+                <button @click="toggleGetOffAlarm" :class="alarmActive ? 'bg-emerald-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300'" class="px-3 py-1.5 rounded-lg font-bold text-xs transition">
+                    {{ alarmActive ? '已開啟 Alert' : '開啟提醒' }}
+                </button>
+            </div>
+
+            <!-- Route Stop Sequence List -->
+            <div class="p-4 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+                <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider">路線所有停靠車站</h4>
+                
+                <div class="relative pl-6 space-y-6 border-l-2 border-emerald-500/30 ml-2">
+                    <div v-for="(st, idx) in activeRouteDetailStops" :key="idx" class="relative">
+                        <!-- Station Dot -->
+                        <div class="absolute -left-[31px] top-0.5 w-4 h-4 rounded-full border-2 border-white dark:border-gray-800" 
+                             :class="st.isCurrent ? 'bg-emerald-500 ring-4 ring-emerald-500/30' : 'bg-gray-300 dark:bg-gray-600'"></div>
+                        
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                                    <span>{{ idx + 1 }}. {{ st.name }}</span>
+                                    <span v-if="st.isCurrent" class="text-[10px] bg-emerald-500 text-white px-1.5 py-0.2 rounded font-normal">你所在車站</span>
+                                </div>
+                                <div class="text-[11px] text-gray-400 mt-0.5">{{ st.location }}</div>
+                            </div>
+
+                            <div class="text-right font-mono">
+                                <span class="text-xs font-bold text-emerald-600 dark:text-emerald-400">{{ st.eta }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BOTTOM NAVIGATION BAR -->
+    <nav class="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 grid grid-cols-4 py-2 z-20">
+        <button @click="currentTab = 'nearby'" :class="currentTab === 'nearby' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-gray-400'" class="flex flex-col items-center gap-1 transition">
+            <i data-lucide="bus" class="w-5 h-5"></i>
+            <span class="text-[10px]">附近車站</span>
+        </button>
+
+        <button @click="currentTab = 'favorites'" :class="currentTab === 'favorites' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-gray-400'" class="flex flex-col items-center gap-1 transition relative">
+            <i data-lucide="star" class="w-5 h-5"></i>
+            <span class="text-[10px]">我的收藏</span>
+            <span v-if="favorites.length" class="absolute top-0 right-6 w-2 h-2 bg-amber-400 rounded-full"></span>
+        </button>
+
+        <button @click="currentTab = 'planner'" :class="currentTab === 'planner' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-gray-400'" class="flex flex-col items-center gap-1 transition">
+            <i data-lucide="route" class="w-5 h-5"></i>
+            <span class="text-[10px]">路線規劃</span>
+        </button>
+
+        <button @click="currentTab = 'alerts'" :class="currentTab === 'alerts' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-gray-400'" class="flex flex-col items-center gap-1 transition">
+            <i data-lucide="bell" class="w-5 h-5"></i>
+            <span class="text-[10px]">交通通告</span>
+        </button>
+    </nav>
+
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted, nextTick } = Vue;
+
+createApp({
+    setup() {
+        const isDark = ref(false);
+        const currentTab = ref('nearby');
+        const viewMode = ref('list');
+        const selectedOp = ref('ALL');
+        const searchQuery = ref('');
+        const isRefreshing = ref(false);
+        const alarmActive = ref(false);
+        const trafficAlert = ref('特別提示: 告士打道東行近波斯富街段交通繁忙，部分班次可能延誤 5-10 分鐘。');
+
+        const destinationTarget = ref('美孚 / 荔枝角');
+        const planResult = ref(null);
+
+        // Active modal route details
+        const activeRoute = ref(null);
+
+        // GPS state variables
+        const isLocating = ref(false);
+        const gpsStatusText = ref('未定位');
+        const gpsStatusClass = ref('bg-gray-700 text-gray-300');
+        const userCustomLocation = ref(null);
+
+        // Preset Locations
+        const presetLocations = [
+            { name: "銅鑼灣 崇光百貨 (Sogo CWB)", lat: 22.2803, lng: 114.1843 },
+            { name: "旺角 雅蘭中心 (Mong Kok)", lat: 22.3193, lng: 114.1694 },
+            { name: "中環 環球大廈 (Central)", lat: 22.2819, lng: 114.1582 },
+            { name: "沙田 市中心 (Shatin Central)", lat: 22.3814, lng: 114.1887 }
+        ];
+        const selectedPresetLocationIndex = ref(0);
+
+        const operators = [
+            { id: 'ALL', label: '全部', activeClass: 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900' },
+            { id: 'KMB', label: '九巴', activeClass: 'bg-red-600 text-white' },
+            { id: 'CTB', label: '城巴', activeClass: 'bg-amber-400 text-slate-900 font-bold' },
+            { id: 'GMB', label: '小巴', activeClass: 'bg-emerald-600 text-white' }
+        ];
+
+        // Favorites Array
+        const favorites = ref([
+            {
+                code: '102',
+                operator: 'KMB',
+                dest: '美孚',
+                stopId: 'stop_1',
+                stopName: '軒尼詩道崇光百貨',
+                etas: [{ time: '10:12', min: 2 }]
+            }
+        ]);
+
+        // Dynamic Bus Stops Data
+        const busStopsData = ref([]);
+
+        // Generate stops based on lat/lng coordinates
+        const updateStopsForCoordinates = (lat, lng, name = "當前車站") => {
+            busStopsData.value = [
+                {
+                    id: 'stop_1',
+                    name: name !== "當前車站" ? `${name} 對出巴士站` : '當前位置附近 巴士總站',
+                    distance: 65,
+                    lat: lat + 0.0006,
+                    lng: lng + 0.0004,
+                    routes: [
+                        { code: '102', operator: 'KMB', dest: '美孚', fare: 11.1, wheelchair: true, crowd: '適中', etas: [{ time: '10:12', min: 2 }, { time: '10:20', min: 10 }] },
+                        { code: '18X', operator: 'CTB', dest: '堅尼地城', fare: 9.8, wheelchair: true, crowd: '暢通', etas: [{ time: '10:14', min: 4 }, { time: '10:28', min: 18 }] },
+                        { code: '112', operator: 'KMB', dest: '蘇屋', fare: 11.1, wheelchair: true, crowd: '擁擠', etas: [{ time: '10:11', min: 1 }, { time: '10:19', min: 9 }] },
+                        { code: '26M', operator: 'GMB', dest: '市中心/港鐵站', fare: 7.5, wheelchair: false, crowd: '適中', etas: [{ time: '10:16', min: 6 }] }
+                    ]
+                },
+                {
+                    id: 'stop_2',
+                    name: '主要幹道 (分站)',
+                    distance: 210,
+                    lat: lat - 0.0011,
+                    lng: lng - 0.0008,
+                    routes: [
+                        { code: '960', operator: 'KMB', dest: '屯門建生', fare: 21.9, wheelchair: true, crowd: '暢通', etas: [{ time: '10:15', min: 5 }, { time: '10:27', min: 17 }] },
+                        { code: 'A11', operator: 'CTB', dest: '機場 (地面運輸中心)', fare: 41.9, wheelchair: true, crowd: '暢通', etas: [{ time: '10:22', min: 12 }] }
+                    ]
+                }
+            ];
+        };
+
+        // Real Geolocation function
+        const getUserLocation = () => {
+            if (!navigator.geolocation) {
+                gpsStatusText.value = '不支援 GPS';
+                gpsStatusClass.value = 'bg-red-500/20 text-red-400';
+                return;
+            }
+
+            isLocating.value = true;
+            gpsStatusText.value = '定位中...';
+            gpsStatusClass.value = 'bg-amber-500/20 text-amber-400';
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    isLocating.value = false;
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+
+                    userCustomLocation.value = { lat, lng };
+                    selectedPresetLocationIndex.value = 'user';
+                    
+                    gpsStatusText.value = 'GPS 正常';
+                    gpsStatusClass.value = 'bg-emerald-500/20 text-emerald-400';
+
+                    updateStopsForCoordinates(lat, lng, "當前位置");
+
+                    if (leafletMap) {
+                        leafletMap.setView([lat, lng], 16);
+                        renderMapMarkers();
+                    }
+                },
+                (error) => {
+                    isLocating.value = false;
+                    gpsStatusText.value = '請允許定位權限';
+                    gpsStatusClass.value = 'bg-red-500/20 text-red-400';
+                    console.warn('Geolocation error:', error.message);
+
+                    // Fallback to currently selected preset
+                    const loc = getCurrentLocationObj();
+                    updateStopsForCoordinates(loc.lat, loc.lng, loc.name);
+                },
+                { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+            );
+        };
+
+        const getCurrentLocationObj = () => {
+            if (selectedPresetLocationIndex.value === 'user' && userCustomLocation.value) {
+                return { name: "當前 GPS 位置", ...userCustomLocation.value };
+            }
+            const idx = typeof selectedPresetLocationIndex.value === 'number' ? selectedPresetLocationIndex.value : 0;
+            return presetLocations[idx];
+        };
+
+        // Detailed Stops for Modal Drawer
+        const activeRouteDetailStops = ref([
+            { name: '起點站', location: '起點大路', eta: '已過站', isCurrent: false },
+            { name: '當前車站 (你所在的位置)', location: '附近街道', eta: '2 分鐘', isCurrent: true },
+            { name: '下一個分站', location: '主要路口', eta: '7 分鐘', isCurrent: false },
+            { name: '海底隧道 / 轉乘站', location: '幹道收費廣場', eta: '14 分鐘', isCurrent: false },
+            { name: '終點總站', location: '市中心總站', eta: '28 分鐘', isCurrent: false }
+        ]);
+
+        const announcements = ref([
+            { id: 1, source: '運輸署', time: '10:00 AM', title: '告士打道快線車多行車緩慢', content: '現時告士打道東行往海底隧道方向車多，駕駛人士請提早規劃路線。' },
+            { id: 2, source: '城巴', time: '09:30 AM', title: '特別線 A11 班次調整通知', content: '因應機場客流量增加，A11 線於尖峰時段已加開加密班次至 12 分鐘一班。' }
+        ]);
+
+        // Leaflet Map Object
+        let leafletMap = null;
+        let markers = [];
+
+        // Computed Filtered Stops
+        const filteredStops = computed(() => {
+            return busStopsData.value.map(stop => {
+                const routes = stop.routes.filter(r => {
+                    const matchOp = selectedOp.value === 'ALL' || r.operator === selectedOp.value;
+                    const matchSearch = !searchQuery.value || 
+                        r.code.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
+                        r.dest.includes(searchQuery.value);
+                    return matchOp && matchSearch;
+                });
+                return { ...stop, routes };
+            }).filter(stop => stop.routes.length > 0);
+        });
+
+        // Initialize Map
+        const initMap = () => {
+            if (leafletMap) return;
+            const currentLoc = getCurrentLocationObj();
+            leafletMap = L.map('map').setView([currentLoc.lat, currentLoc.lng], 16);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(leafletMap);
+
+            renderMapMarkers();
+        };
+
+        const renderMapMarkers = () => {
+            if (!leafletMap) return;
+            // Clear existing markers
+            markers.forEach(m => leafletMap.removeLayer(m));
+            markers = [];
+
+            const currentLoc = getCurrentLocationObj();
+
+            // User Location Marker
+            const userMarker = L.circleMarker([currentLoc.lat, currentLoc.lng], {
+                radius: 9,
+                fillColor: '#10B981',
+                color: '#FFFFFF',
+                weight: 3,
+                opacity: 1,
+                fillOpacity: 0.9
+            }).addTo(leafletMap).bindPopup(`<b>${currentLoc.name}</b>`);
+            markers.push(userMarker);
+
+            // Bus Stop Markers
+            busStopsData.value.forEach(stop => {
+                const marker = L.marker([stop.lat, stop.lng]).addTo(leafletMap);
+                marker.bindPopup(`
+                    <div style="font-size:12px;">
+                        <b>${stop.name}</b><br/>
+                        行經路線: ${stop.routes.map(r => r.code).join(', ')}
+                    </div>
+                `);
+                markers.push(marker);
+            });
+        };
+
+        const switchMode = (mode) => {
+            viewMode.value = mode;
+            if (mode === 'map') {
+                nextTick(() => {
+                    initMap();
+                    if (leafletMap) leafletMap.invalidateSize();
+                });
+            }
+        };
+
+        const changeLocation = () => {
+            const loc = getCurrentLocationObj();
+            updateStopsForCoordinates(loc.lat, loc.lng, loc.name);
+            if (leafletMap) {
+                leafletMap.setView([loc.lat, loc.lng], 16);
+                renderMapMarkers();
+            }
+            refreshETA();
+        };
+
+        const toggleDarkMode = () => {
+            isDark.value = !isDark.value;
+            if (isDark.value) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        };
+
+        const refreshETA = () => {
+            isRefreshing.value = true;
+            setTimeout(() => {
+                // Simulate updating ETAs
+                busStopsData.value.forEach(stop => {
+                    stop.routes.forEach(r => {
+                        r.etas.forEach(e => {
+                            if (e.min > 1) e.min -= 1;
+                            else e.min = Math.floor(Math.random() * 12) + 2;
+                        });
+                    });
+                });
+                isRefreshing.value = false;
+            }, 600);
+        };
+
+        const isFavorite = (code, stopId) => {
+            return favorites.value.some(f => f.code === code && f.stopId === stopId);
+        };
+
+        const toggleFavorite = (route, stop) => {
+            const index = favorites.value.findIndex(f => f.code === route.code && f.stopId === stop.id);
+            if (index >= 0) {
+                favorites.value.splice(index, 1);
+            } else {
+                favorites.value.push({
+                    code: route.code,
+                    operator: route.operator,
+                    dest: route.dest,
+                    stopId: stop.id,
+                    stopName: stop.name,
+                    etas: route.etas
+                });
+            }
+        };
+
+        const openRouteDetail = (route, stop) => {
+            activeRoute.value = route;
+            alarmActive.value = false;
+        };
+
+        const toggleGetOffAlarm = () => {
+            alarmActive.value = !alarmActive.value;
+            if (alarmActive.value) {
+                alert("已成功開啟「落車警示提醒」！巴士到達前 1 站將會發出聲響與震動提示。");
+            }
+        };
+
+        const simulatePlan = () => {
+            planResult.value = [
+                { operator: 'KMB', code: '102', tag: '最快到達', fare: 11.1, duration: 25, nextEta: '2 分鐘', discount: '接駁鐵路 $1.0 折扣' },
+                { operator: 'CTB', code: '118', tag: '少步行', fare: 11.1, duration: 28, nextEta: '6 分鐘', discount: '轉乘 102 可享 2 段合約優惠' }
+            ];
+        };
+
+        const getOpColor = (op) => {
+            switch(op) {
+                case 'KMB': return 'bg-red-600';
+                case 'CTB': return 'bg-amber-400 text-slate-900';
+                case 'GMB': return 'bg-emerald-600';
+                default: return 'bg-slate-700';
+            }
+        };
+
+        const getCrowdColor = (crowd) => {
+            if (crowd === '擁擠') return 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400';
+            if (crowd === '適中') return 'bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400';
+            return 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400';
+        };
+
+        onMounted(() => {
+            lucide.createIcons();
+            // Automatically request GPS on load
+            getUserLocation();
+
+            // Timer for countdown refresh every 30 seconds
+            setInterval(() => {
+                refreshETA();
+            }, 30000);
+        });
+
+        return {
+            isDark,
+            currentTab,
+            viewMode,
+            selectedOp,
+            searchQuery,
+            isRefreshing,
+            alarmActive,
+            trafficAlert,
+            presetLocations,
+            selectedPresetLocationIndex,
+            isLocating,
+            gpsStatusText,
+            gpsStatusClass,
+            userCustomLocation,
+            operators,
+            busStopsData,
+            filteredStops,
+            favorites,
+            activeRoute,
+            activeRouteDetailStops,
+            announcements,
+            destinationTarget,
+            planResult,
+            getUserLocation,
+            toggleDarkMode,
+            switchMode,
+            changeLocation,
+            refreshETA,
+            isFavorite,
+            toggleFavorite,
+            openRouteDetail,
+            toggleGetOffAlarm,
+            simulatePlan,
+            getOpColor,
+            getCrowdColor
+        };
+    }
+}).mount('#app');
+</script>
