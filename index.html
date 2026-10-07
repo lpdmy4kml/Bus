@@ -2,901 +2,633 @@
 <html lang="zh-HK">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>香港巴士即時到站與附近路線 App</title>
-    <!-- Tailwind CSS CDN -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>聖公會李炳中學巴士即時到站 App</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        kmb: '#E31B23',
-                        citybus: '#FFE100',
-                        gmb: '#008738',
-                        appbg: '#F3F4F6'
-                    }
-                }
-            }
-        }
-    </script>
-    <!-- Vue 3 CDN -->
+    <!-- Vue 3 -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <!-- Leaflet CSS & JS for Maps -->
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Leaflet Map CSS & JS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    
     <style>
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 4px;
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
         }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #CBD5E1;
-            border-radius: 4px;
+        [v-cloak] {
+            display: none !important;
         }
-        #map {
-            height: calc(100vh - 180px);
-            min-height: 350px;
-            width: 100%;
-            z-index: 10;
+        .pulse-red {
+            animation: pulse-red-anim 1.5s infinite;
+        }
+        @keyframes pulse-red-anim {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.75; transform: scale(1.02); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        .leaflet-popup-content-wrapper {
+            border-radius: 12px;
+            padding: 4px;
         }
     </style>
 </head>
-<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-100 font-sans antialiased transition-colors duration-200">
+<body class="bg-slate-100 text-slate-800 antialiased min-h-screen">
+    <div id="app" v-cloak class="max-w-md mx-auto min-h-screen bg-slate-50 flex flex-col shadow-xl relative pb-20">
 
-<div id="app" class="max-w-md mx-auto min-h-screen bg-white dark:bg-gray-800 shadow-2xl flex flex-col relative overflow-hidden">
+        <!-- Top Header Navigation -->
+        <header class="bg-blue-900 text-white px-4 py-3 sticky top-0 z-30 shadow-md">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2.5">
+                    <!-- School Logo Image Placeholder -->
+                    <img 
+                        src="SchoolLogo.png" 
+                        alt="聖公會李炳中學校徽" 
+                        class="w-11 h-12 object-contain shrink-0 drop-shadow-md"
+                        onerror="this.onerror=null; this.classList.add('p-1', 'bg-blue-800/50', 'rounded');"
+                    />
 
-    <!-- App Header -->
-    <header class="bg-slate-900 text-white p-4 flex flex-col gap-2 shadow-md z-20">
-        <div class="flex justify-between items-center">
-            <div class="flex items-center space-x-2">
-                <div class="bg-red-600 text-white font-bold p-1.5 rounded-lg text-xs tracking-wider">HK BUS</div>
-                <h1 class="font-bold text-lg tracking-wide">巴士即時到站</h1>
-            </div>
-            <div class="flex items-center space-x-2">
-                <!-- Dark Mode Toggle -->
-                <button @click="toggleDarkMode" class="p-2 rounded-full hover:bg-slate-800 text-gray-300">
-                    <i :data-lucide="isDark ? 'sun' : 'moon'" class="w-5 h-5"></i>
-                </button>
-                <!-- Refresh Button -->
-                <button @click="refreshETA" class="p-2 rounded-full hover:bg-slate-800 text-emerald-400 active:scale-95 transition">
-                    <i data-lucide="refresh-cw" class="w-5 h-5" :class="{'animate-spin': isRefreshing}"></i>
-                </button>
-            </div>
-        </div>
-
-        <!-- Location Picker / Search bar -->
-        <div class="flex flex-col gap-2 bg-slate-800 p-2.5 rounded-xl border border-slate-700">
-            <div class="flex items-center text-sm text-gray-200 gap-2">
-                <i data-lucide="map-pin" class="w-4 h-4 text-red-500 shrink-0"></i>
-                <span class="text-xs text-gray-400 shrink-0">位置:</span>
-                
-                <select v-model="selectedPresetLocationIndex" @change="changeLocation" class="bg-slate-900 text-white font-medium focus:outline-none flex-1 cursor-pointer truncate rounded-lg p-1 border border-slate-700 text-xs">
-                    <option value="user" class="bg-slate-800 text-emerald-400 font-bold" v-if="userCustomLocation">
-                        📍 {{ userCustomLocation.name }} ({{ userCustomLocation.lat.toFixed(4) }}, {{ userCustomLocation.lng.toFixed(4) }})
-                    </option>
-                    <optgroup label="九龍及新界區">
-                        <option v-for="(loc, index) in presetLocations.filter(l => l.region === 'KlnNT')" :key="'kln-'+index" :value="getOriginalIndex(loc)" class="bg-slate-800 text-white">
-                            {{ loc.name }}
-                        </option>
-                    </optgroup>
-                    <optgroup label="港島區">
-                        <option v-for="(loc, index) in presetLocations.filter(l => l.region === 'HK')" :key="'hk-'+index" :value="getOriginalIndex(loc)" class="bg-slate-800 text-white">
-                            {{ loc.name }}
-                        </option>
-                    </optgroup>
-                </select>
-
-                <!-- Real GPS Trigger Button -->
-                <button @click="getUserLocation" title="重試 GPS 定位" class="p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-emerald-400 active:scale-95 transition flex items-center gap-1 text-xs shrink-0">
-                    <i data-lucide="crosshair" class="w-4 h-4" :class="{'animate-spin': isLocating}"></i>
-                    <span>GPS</span>
-                </button>
-            </div>
-
-            <!-- GPS Status Banner & Manual Keyword Input -->
-            <div class="flex items-center justify-between gap-2 text-[11px]">
-                <div class="flex items-center gap-1">
-                    <span :class="gpsStatusClass" class="px-2 py-0.5 rounded font-mono text-[10px]">
-                        {{ gpsStatusText }}
-                    </span>
+                    <div>
+                        <h1 class="font-bold text-base leading-tight flex items-center gap-1.5">
+                            聖公會李炳中學
+                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/30 text-emerald-200 border border-emerald-400/30">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping mr-1"></span>
+                                實時
+                            </span>
+                        </h1>
+                        <p class="text-xs text-blue-100 font-medium mt-0.5 leading-snug">SKH Li Ping Secondary School</p>
+                        <p class="text-[11px] text-blue-200/90 mt-0.5">和宜合道 450 號 (對開巴士站)</p>
+                    </div>
                 </div>
-                <!-- Search Location Input -->
-                <div class="flex-1 relative">
-                    <input type="text" v-model="locationSearchQuery" @input="filterLocationByName" placeholder="或輸入地區 (如: 荃灣, 觀塘)..." class="w-full bg-slate-900 text-white text-[11px] px-2 py-1 rounded border border-slate-700 focus:outline-none focus:border-emerald-500">
-                </div>
-            </div>
-        </div>
-    </header>
 
-    <!-- GPS Blocked Warning Banner -->
-    <div v-if="gpsBlockedNotice" class="bg-red-500/10 border-b border-red-500/30 text-red-600 dark:text-red-400 px-3 py-2 text-xs flex items-center justify-between">
-        <div class="flex items-center gap-2">
-            <i data-lucide="alert-circle" class="w-4 h-4 shrink-0 text-red-500"></i>
-            <span>因瀏覽器限制未能自動獲取 GPS。請由上方選單選擇你目前的地區！</span>
-        </div>
-        <button @click="gpsBlockedNotice = false" class="text-red-400 hover:text-white ml-2 font-bold">✕</button>
-    </div>
-
-    <!-- Top Traffic Alert Banner -->
-    <div v-if="trafficAlert" class="bg-amber-500/10 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 px-3 py-2 text-xs flex items-center justify-between">
-        <div class="flex items-center gap-2 truncate">
-            <i data-lucide="alert-triangle" class="w-4 h-4 shrink-0 text-amber-500"></i>
-            <span class="truncate">{{ trafficAlert }}</span>
-        </div>
-        <button @click="trafficAlert = ''" class="text-amber-500 hover:opacity-80 ml-1">✕</button>
-    </div>
-
-    <!-- Mode Selector & Filter Toolbar -->
-    <div class="bg-gray-50 dark:bg-gray-800/90 border-b dark:border-gray-700 p-2 flex flex-col gap-2 z-10">
-        <div class="flex items-center justify-between">
-            <!-- View Mode Switch (List vs Map) -->
-            <div class="bg-gray-200 dark:bg-gray-700 p-1 rounded-lg flex text-xs font-semibold">
-                <button @click="switchMode('list')" :class="viewMode === 'list' ? 'bg-white dark:bg-gray-900 text-slate-900 dark:text-white shadow' : 'text-gray-500'" class="px-3 py-1 rounded-md transition flex items-center gap-1">
-                    <i data-lucide="list" class="w-3.5 h-3.5"></i> 列表
-                </button>
-                <button @click="switchMode('map')" :class="viewMode === 'map' ? 'bg-white dark:bg-gray-900 text-slate-900 dark:text-white shadow' : 'text-gray-500'" class="px-3 py-1 rounded-md transition flex items-center gap-1">
-                    <i data-lucide="map" class="w-3.5 h-3.5"></i> 地圖
+                <!-- Refresh & Live Timer -->
+                <button @click="refreshETA(true)" class="flex items-center space-x-1 bg-blue-800/80 hover:bg-blue-700 text-xs px-2.5 py-1.5 rounded-full border border-blue-600/50 transition">
+                    <i class="fa-solid fa-rotate text-[11px]" :class="{'fa-spin': isRefreshing}"></i>
+                    <span class="font-mono text-amber-300 font-semibold">{{ autoRefreshTimer }}s</span>
                 </button>
             </div>
 
-            <!-- Operator Filter Pill -->
-            <div class="flex gap-1">
-                <button v-for="op in operators" :key="op.id" @click="selectedOp = op.id" 
-                    :class="selectedOp === op.id ? op.activeClass : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300'"
-                    class="px-2.5 py-1 rounded-md text-xs font-semibold transition">
+            <!-- Direction Toggle Selector -->
+            <div class="mt-3 bg-blue-950/70 p-1 rounded-xl flex text-[11px] font-semibold gap-1 overflow-x-auto no-scrollbar">
+                <button 
+                    @click="setDirection('SOUTH')" 
+                    class="flex-1 py-1.5 px-2 rounded-lg flex items-center justify-center space-x-1 whitespace-nowrap transition-all duration-200"
+                    :class="currentDirection === 'SOUTH' ? 'bg-amber-400 text-blue-950 shadow-sm font-bold' : 'text-blue-200 hover:text-white'">
+                    <i class="fa-solid fa-school"></i>
+                    <span>可風中學<br><span class="text-[9px] font-normal opacity-90">往 葵芳 / 荃灣 / 梨木樹(312) / 市區</span></span>
+                </button>
+                <button 
+                    @click="setDirection('NORTH')" 
+                    class="flex-1 py-1.5 px-2 rounded-lg flex items-center justify-center space-x-1 whitespace-nowrap transition-all duration-200"
+                    :class="currentDirection === 'NORTH' ? 'bg-amber-400 text-blue-950 shadow-sm font-bold' : 'text-blue-200 hover:text-white'">
+                    <i class="fa-solid fa-arrow-right-left"></i>
+                    <span>可風中學對面<br><span class="text-[9px] font-normal opacity-90">往 城隧 / 沙田 / 青衣(312) / 大埔</span></span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Special Traffic Announcement Bar -->
+        <div class="bg-amber-500 text-slate-900 text-xs px-3 py-1.5 flex items-center justify-between font-medium shadow-inner">
+            <div class="flex items-center space-x-1.5 truncate">
+                <i class="fa-solid fa-bullhorn text-amber-950"></i>
+                <span class="truncate" v-if="currentDirection === 'SOUTH'">可風中學站: 往荃灣、葵涌、葵芳、梨木樹(312)、九龍及港島方向。</span>
+                <span class="truncate" v-else>可風中學對面站 (WO04-N-1400-0): 往城門隧道及青衣(312)方向。</span>
+            </div>
+        </div>
+
+        <!-- Filter & Search Section -->
+        <section class="p-3 bg-white border-b border-slate-200 space-y-2 sticky top-[108px] z-20 shadow-sm">
+            <!-- Operator Filter Pills -->
+            <div class="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
+                <button 
+                    v-for="op in operators" 
+                    :key="op.id"
+                    @click="selectedOp = op.id"
+                    class="px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all"
+                    :class="selectedOp === op.id ? op.activeClass : 'bg-slate-100 text-slate-600 hover:bg-slate-200'">
                     {{ op.label }}
                 </button>
-            </div>
-        </div>
 
-        <!-- Quick Filter Input -->
-        <div v-if="currentTab === 'nearby'" class="relative">
-            <input type="text" v-model="searchQuery" placeholder="搜尋路線或目的地 (例如: 102, 往中環)..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <i data-lucide="search" class="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5"></i>
-            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-2.5 top-2 text-xs text-gray-400">✕</button>
-        </div>
-    </div>
-
-    <!-- MAIN CONTENT AREA -->
-    <main class="flex-1 overflow-y-auto custom-scrollbar relative">
-
-        <!-- TAB 1: NEARBY BUS STOPS (LIST MODE) -->
-        <div v-if="currentTab === 'nearby' && viewMode === 'list'" class="p-3 space-y-4">
-            <div v-if="filteredStops.length === 0" class="text-center py-10 text-gray-400 text-sm">
-                沒有找到符合搜尋條件的路線或車站。
-            </div>
-
-            <div v-for="stop in filteredStops" :key="stop.id" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700/80 shadow-sm overflow-hidden">
-                <!-- Stop Header -->
-                <div class="bg-slate-100 dark:bg-slate-800/80 px-3 py-2 border-b dark:border-gray-700 flex justify-between items-center">
-                    <div class="flex items-center gap-2">
-                        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                        <h3 class="font-bold text-sm text-slate-800 dark:text-slate-100">{{ stop.name }}</h3>
-                    </div>
-                    <span class="text-[11px] text-gray-500 font-mono flex items-center gap-1">
-                        <i data-lucide="navigation" class="w-3 h-3 text-blue-500"></i> {{ stop.distance }}m (約步行 {{ Math.ceil(stop.distance/80) }} 分鐘)
-                    </span>
-                </div>
-
-                <!-- Bus Routes at this Stop -->
-                <div class="divide-y divide-gray-100 dark:divide-gray-700/50">
-                    <div v-for="route in stop.routes" :key="route.code" class="p-3 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition">
-                        <div class="flex items-center justify-between">
-                            
-                            <!-- Left: Operator Badge & Route Number -->
-                            <div class="flex items-center gap-2.5 cursor-pointer" @click="openRouteDetail(route, stop)">
-                                <span class="px-2 py-0.5 rounded text-[11px] font-black tracking-wide text-white shadow-xs" :class="getOpColor(route.operator)">
-                                    {{ route.operator }}
-                                </span>
-                                <div>
-                                    <div class="flex items-center gap-1.5">
-                                        <span class="text-lg font-black tracking-tight text-slate-900 dark:text-white">{{ route.code }}</span>
-                                        <span class="text-xs text-gray-500 dark:text-gray-400">往 {{ route.dest }}</span>
-                                    </div>
-                                    <div class="flex items-center gap-2 text-[10px] text-gray-400 mt-0.5">
-                                        <span v-if="route.wheelchair" class="flex items-center text-blue-500" title="低地台無障礙巴士">♿</span>
-                                        <span v-if="route.crowd" :class="getCrowdColor(route.crowd)" class="px-1 rounded text-[9px] font-medium">
-                                            {{ route.crowd }}
-                                        </span>
-                                        <span>全程 ${{ route.fare.toFixed(1) }}</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Right: Real-time ETA Cards & Favorite -->
-                            <div class="flex items-center gap-2">
-                                <!-- Favorite Toggle -->
-                                <button @click.stop="toggleFavorite(route, stop)" class="text-gray-300 hover:text-amber-400 p-1">
-                                    <i data-lucide="star" class="w-4 h-4" :class="{'fill-amber-400 text-amber-400': isFavorite(route.code, stop.id)}"></i>
-                                </button>
-
-                                <!-- Next ETAs -->
-                                <div class="flex items-center gap-1.5">
-                                    <div v-for="(eta, idx) in route.etas" :key="idx" 
-                                        :class="idx === 0 ? 'bg-emerald-600 text-white ring-2 ring-emerald-500/30' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'"
-                                        class="px-2.5 py-1 rounded-lg text-center font-mono">
-                                        <div class="text-xs font-bold">{{ eta.time }}</div>
-                                        <div v-if="eta.min !== null" class="text-[9px] opacity-80">{{ eta.min }}分</div>
-                                    </div>
-                                </div>
-                            </div>
-
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- TAB 1 (MAP VIEW) -->
-        <div v-show="currentTab === 'nearby' && viewMode === 'map'" class="relative">
-            <div id="map"></div>
-            <div class="absolute bottom-3 left-3 right-3 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md p-3 rounded-xl shadow-lg z-[1000] text-xs flex justify-between items-center border border-gray-200 dark:border-gray-700">
-                <div class="flex items-center gap-2">
-                    <span class="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></span>
-                    <span class="font-semibold">藍點為目前位置：{{ currentLocationDisplayName }}</span>
-                </div>
-                <span class="text-gray-500">點擊地圖上的站牌查看到站時間</span>
-            </div>
-        </div>
-
-        <!-- TAB 2: FAVORITES -->
-        <div v-if="currentTab === 'favorites'" class="p-3 space-y-3">
-            <h2 class="font-bold text-sm text-gray-500 dark:text-gray-400 px-1 uppercase tracking-wider">我的收藏路線</h2>
-            
-            <div v-if="favorites.length === 0" class="text-center py-12 text-gray-400">
-                <i data-lucide="bookmark" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
-                <p class="text-sm">暫未收藏任何路線。</p>
-                <p class="text-xs text-gray-400 mt-1">喺附近路線點擊 ⭐️ 圖示即可加入常用！</p>
-            </div>
-
-            <div v-for="fav in favorites" :key="fav.code + fav.stopId" class="bg-white dark:bg-gray-800 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex items-center justify-between">
-                <div>
-                    <div class="flex items-center gap-2">
-                        <span class="px-2 py-0.5 rounded text-[10px] font-black text-white" :class="getOpColor(fav.operator)">{{ fav.operator }}</span>
-                        <span class="font-black text-lg text-slate-900 dark:text-white">{{ fav.code }}</span>
-                        <span class="text-xs text-gray-500">往 {{ fav.dest }}</span>
-                    </div>
-                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1">
-                        <i data-lucide="map-pin" class="w-3 h-3 text-red-500"></i> {{ fav.stopName }}
-                    </div>
-                </div>
-
-                <div class="flex items-center gap-2">
-                    <div class="bg-emerald-600 text-white font-mono px-3 py-1.5 rounded-xl text-center">
-                        <div class="text-xs font-bold">{{ fav.etas[0]?.time }}</div>
-                        <div class="text-[10px]">{{ fav.etas[0]?.min }}分鐘</div>
-                    </div>
-                    <button @click="toggleFavorite(fav, {id: fav.stopId})" class="text-amber-400 p-1 hover:text-gray-400">
-                        <i data-lucide="star" class="w-5 h-5 fill-amber-400"></i>
+                <!-- View Switcher -->
+                <div class="flex bg-slate-100 rounded-lg p-0.5 ml-auto border border-slate-200">
+                    <button @click="viewMode = 'list'" class="px-2 py-1 rounded text-xs" :class="viewMode === 'list' ? 'bg-white shadow text-blue-900 font-bold' : 'text-slate-500'">
+                        <i class="fa-solid fa-list-ul"></i>
                     </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- TAB 3: SMART ROUTE PLANNER / SEARCH -->
-        <div v-if="currentTab === 'planner'" class="p-4 space-y-4">
-            <div class="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-3">
-                <h2 class="font-bold text-sm text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                    <i data-lucide="navigation" class="w-4 h-4 text-emerald-500"></i> 點對點巴士搜尋
-                </h2>
-                <div class="space-y-2 text-xs">
-                    <div>
-                        <label class="text-gray-400">起點:</label>
-                        <input type="text" readonly :value="currentLocationDisplayName" class="w-full p-2 bg-gray-100 dark:bg-gray-700 rounded-lg font-medium text-gray-700 dark:text-gray-200">
-                    </div>
-                    <div>
-                        <label class="text-gray-400">目的地:</label>
-                        <select v-model="destinationTarget" class="w-full p-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-800 dark:text-gray-100 font-medium">
-                            <option value="美孚 / 荔枝角">美孚 / 荔枝角</option>
-                            <option value="堅尼地城 / 西環">堅尼地城 / 西環</option>
-                            <option value="觀塘市中心">觀塘市中心</option>
-                            <option value="將軍澳康城">將軍澳康城</option>
-                        </select>
-                    </div>
-                    <button @click="simulatePlan" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg shadow transition flex items-center justify-center gap-2">
-                        <i data-lucide="search" class="w-4 h-4"></i> 智能路線推薦
+                    <button @click="viewMode = 'map'" class="px-2 py-1 rounded text-xs" :class="viewMode === 'map' ? 'bg-white shadow text-blue-900 font-bold' : 'text-slate-500'">
+                        <i class="fa-solid fa-map-location-dot"></i>
                     </button>
                 </div>
             </div>
 
-            <!-- Planning Results -->
-            <div v-if="planResult" class="space-y-3">
-                <h3 class="text-xs font-bold text-gray-400">推薦搭乘方案:</h3>
-                <div v-for="(res, index) in planResult" :key="index" class="bg-white dark:bg-gray-800 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-                    <div class="flex justify-between items-start">
-                        <div class="flex items-center gap-2">
-                            <span class="px-2 py-0.5 rounded text-xs font-black text-white" :class="getOpColor(res.operator)">{{ res.operator }}</span>
-                            <span class="text-lg font-black text-slate-900 dark:text-white">{{ res.code }}</span>
-                            <span class="text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">{{ res.tag }}</span>
-                        </div>
-                        <span class="font-bold text-emerald-600 dark:text-emerald-400 text-sm">${{ res.fare.toFixed(1) }}</span>
-                    </div>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">約 {{ res.duration }} 分鐘到到達 | 下班車: <span class="font-bold text-slate-800 dark:text-slate-100">{{ res.nextEta }}</span></p>
-                    <p class="text-[11px] text-amber-600 dark:text-amber-400 mt-1" v-if="res.discount">💡 八達通轉乘優惠：{{ res.discount }}</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- TAB 4: TRAFFIC ALERTS -->
-        <div v-if="currentTab === 'alerts'" class="p-4 space-y-3">
-            <h2 class="font-bold text-sm text-gray-500 dark:text-gray-400 px-1 uppercase tracking-wider">實時交通與改道消息</h2>
-            
-            <div v-for="ann in announcements" :key="ann.id" class="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-2">
-                <div class="flex justify-between items-center text-xs text-gray-400">
-                    <span class="px-2 py-0.5 rounded font-semibold text-white bg-slate-700">{{ ann.source }}</span>
-                    <span>{{ ann.time }}</span>
-                </div>
-                <h3 class="font-bold text-sm text-slate-800 dark:text-slate-100">{{ ann.title }}</h3>
-                <p class="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">{{ ann.content }}</p>
-            </div>
-        </div>
-
-    </main>
-
-    <!-- ROUTE DETAIL DRAWER / MODAL -->
-    <div v-if="activeRoute" class="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex flex-col justify-end transition-opacity">
-        <div class="bg-white dark:bg-gray-800 rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-200">
-            <!-- Modal Header -->
-            <div class="p-4 border-b dark:border-gray-700 flex justify-between items-center bg-slate-900 text-white rounded-t-2xl">
-                <div>
-                    <div class="flex items-center gap-2">
-                        <span class="px-2 py-0.5 rounded text-xs font-black text-white" :class="getOpColor(activeRoute.operator)">{{ activeRoute.operator }}</span>
-                        <span class="text-2xl font-black tracking-tight">{{ activeRoute.code }}</span>
-                        <span class="text-xs text-gray-300">往 {{ activeRoute.dest }}</span>
-                    </div>
-                    <p class="text-xs text-gray-400 mt-0.5">全程車費: ${{ activeRoute.fare.toFixed(1) }}</p>
-                </div>
-                <button @click="activeRoute = null" class="p-1 rounded-full hover:bg-slate-800 text-gray-400 hover:text-white">✕</button>
-            </div>
-
-            <!-- Get-off Alarm Switch Banner -->
-            <div class="bg-emerald-500/10 border-b border-emerald-500/20 p-3 flex items-center justify-between text-xs">
-                <div class="flex items-center gap-2">
-                    <i data-lucide="bell" class="w-4 h-4 text-emerald-500"></i>
-                    <div>
-                        <div class="font-bold text-emerald-600 dark:text-emerald-400">落車警示提醒</div>
-                        <div class="text-[10px] text-gray-500">巴士到達指定車站前 1 站發出震動提示</div>
-                    </div>
-                </div>
-                <button @click="toggleGetOffAlarm" :class="alarmActive ? 'bg-emerald-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300'" class="px-3 py-1.5 rounded-lg font-bold text-xs transition">
-                    {{ alarmActive ? '已開啟 Alert' : '開啟提醒' }}
+            <!-- Search Query Input -->
+            <div class="relative">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+                <input 
+                    v-model="searchQuery" 
+                    type="text" 
+                    placeholder="搜尋路線號碼或目的地 (例如 73X, 312, 葵芳, 上水)..." 
+                    class="w-full pl-8 pr-8 py-1.5 text-xs bg-slate-100 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                >
+                <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-2.5 top-2 text-slate-400 text-xs hover:text-slate-600">
+                    <i class="fa-solid fa-circle-xmark"></i>
                 </button>
             </div>
+        </section>
 
-            <!-- Route Stop Sequence List -->
-            <div class="p-4 overflow-y-auto custom-scrollbar flex-1 space-y-4">
-                <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider">路線所有停靠車站</h4>
-                
-                <div class="relative pl-6 space-y-6 border-l-2 border-emerald-500/30 ml-2">
-                    <div v-for="(st, idx) in activeRouteDetailStops" :key="idx" class="relative">
-                        <!-- Station Dot -->
-                        <div class="absolute -left-[31px] top-0.5 w-4 h-4 rounded-full border-2 border-white dark:border-gray-800" 
-                             :class="st.isCurrent ? 'bg-emerald-500 ring-4 ring-emerald-500/30' : 'bg-gray-300 dark:bg-gray-600'"></div>
-                        
-                        <div class="flex justify-between items-start">
+        <!-- Main Content Area: Bus List View -->
+        <main v-if="viewMode === 'list'" class="flex-1 p-3 space-y-3 overflow-y-auto">
+
+            <!-- Route Count Summary -->
+            <div class="flex items-center justify-between text-xs text-slate-500 px-1">
+                <span>共 {{ filteredStops.length }} 條路線資訊</span>
+                <span class="text-slate-400">最快到站優先排序</span>
+            </div>
+
+            <!-- Empty State -->
+            <div v-if="filteredStops.length === 0" class="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300">
+                <i class="fa-solid fa-bus text-3xl text-slate-300 mb-2"></i>
+                <p class="text-sm font-medium text-slate-600">找不到符合條件的巴士路線</p>
+                <p class="text-xs text-slate-400 mt-1">請嘗試清除搜尋關鍵字或切換營辦商分類</p>
+                <button @click="searchQuery = ''; selectedOp = 'ALL'" class="mt-3 px-3 py-1 bg-blue-50 text-blue-600 rounded-lg text-xs font-semibold">重置搜尋</button>
+            </div>
+
+            <!-- Bus Route Cards -->
+            <div 
+                v-for="route in filteredStops" 
+                :key="route.code + currentDirection" 
+                class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden transition-all hover:shadow-md">
+
+                <!-- ACTIVE ROUTE CARD -->
+                <template v-if="route.isServiceActive">
+                    <!-- Top Info Header -->
+                    <div class="p-3 border-b border-slate-100 flex items-center justify-between">
+                        <div class="flex items-center space-x-2.5">
+                            <!-- Route Badge -->
+                            <span 
+                                class="text-lg font-black px-2.5 py-0.5 rounded-lg tracking-tight flex items-center justify-center min-w-[58px]"
+                                :class="getOperatorBadgeClass(route.operator)">
+                                {{ route.code }}
+                            </span>
+
+                            <!-- Destination -->
                             <div>
-                                <div class="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                                    <span>{{ idx + 1 }}. {{ st.name }}</span>
-                                    <span v-if="st.isCurrent" class="text-[10px] bg-emerald-500 text-white px-1.5 py-0.2 rounded font-normal">你所在車站</span>
+                                <div class="text-xs text-slate-400 flex items-center space-x-1">
+                                    <span>{{ route.origin }}</span>
+                                    <i class="fa-solid fa-arrow-right text-[10px]"></i>
                                 </div>
-                                <div class="text-[11px] text-gray-400 mt-0.5">{{ st.location }}</div>
+                                <div class="text-sm font-bold text-slate-800 flex items-center gap-1">
+                                    往 {{ route.dest }}
+                                    <i v-if="route.wheelchair" class="fa-solid fa-wheelchair text-blue-500 text-[11px]" title="低地台無障礙"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Fare & Crowd Status -->
+                        <div class="text-right">
+                            <div class="text-sm font-bold text-slate-900">${{ route.fare.toFixed(1) }}</div>
+                            <span class="text-[10px] px-1.5 py-0.5 rounded font-medium bg-slate-100 text-slate-600">
+                                擁擠度: {{ route.crowd }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- ETAs Display (顯示未來 3 班車) -->
+                    <div class="bg-slate-50/70 p-3">
+                        <div class="text-[11px] font-semibold text-slate-500 mb-2 flex items-center justify-between">
+                            <span><i class="fa-regular fa-clock mr-1"></i>即將到站時間 (連續三班)</span>
+                            <span class="text-blue-600 font-normal hover:underline cursor-pointer" @click="openModal(route)">查看詳細分站 <i class="fa-solid fa-chevron-right text-[9px]"></i></span>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-2">
+                            <!-- 1st ETA -->
+                            <div 
+                                class="p-2 rounded-lg border text-center relative overflow-hidden transition"
+                                :class="route.etas[0].min <= 1 ? 'bg-red-50 border-red-300 pulse-red' : 'bg-white border-blue-200 shadow-sm'">
+                                <div v-if="route.etas[0].min <= 1" class="text-[10px] font-black text-red-600 uppercase tracking-tighter bg-red-100 py-0.5 rounded mb-1">
+                                    即將到站
+                                </div>
+                                <div v-else class="text-[10px] text-slate-500 font-medium">
+                                    首班車
+                                </div>
+
+                                <div class="font-black text-base leading-tight my-0.5" :class="route.etas[0].min <= 1 ? 'text-red-600' : 'text-blue-900'">
+                                    <template v-if="route.etas[0].min <= 1">
+                                        (1分鐘內到達)
+                                    </template>
+                                    <template v-else>
+                                        尚餘 {{ route.etas[0].min }} 分鐘
+                                    </template>
+                                </div>
+
+                                <div class="text-[10px] font-mono text-slate-500">
+                                    預計 {{ route.etas[0].time }}
+                                </div>
                             </div>
 
-                            <div class="text-right font-mono">
-                                <span class="text-xs font-bold text-emerald-600 dark:text-emerald-400">{{ st.eta }}</span>
+                            <!-- 2nd ETA -->
+                            <div class="bg-white p-2 rounded-lg border border-slate-200 text-center">
+                                <div class="text-[10px] text-slate-400 font-medium">第 2 班</div>
+                                <div class="font-bold text-slate-700 text-xs my-0.5">
+                                    尚餘 {{ route.etas[1].min }} 分鐘
+                                </div>
+                                <div class="text-[10px] font-mono text-slate-400">
+                                    {{ route.etas[1].time }}
+                                </div>
                             </div>
+
+                            <!-- 3rd ETA -->
+                            <div class="bg-white p-2 rounded-lg border border-slate-200 text-center">
+                                <div class="text-[10px] text-slate-400 font-medium">第 3 班</div>
+                                <div class="font-bold text-slate-700 text-xs my-0.5">
+                                    尚餘 {{ route.etas[2].min }} 分鐘
+                                </div>
+                                <div class="text-[10px] font-mono text-slate-400">
+                                    {{ route.etas[2].time }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- INACTIVE / OUT OF SERVICE ROUTE CARD -->
+                <template v-else>
+                    <div class="p-3 bg-slate-100/80 flex items-center justify-between opacity-75">
+                        <div class="flex items-center space-x-2.5">
+                            <span 
+                                class="text-base font-bold px-2 py-0.5 rounded opacity-60"
+                                :class="getOperatorBadgeClass(route.operator)">
+                                {{ route.code }}
+                            </span>
+                            <div>
+                                <div class="text-xs font-semibold text-slate-700">往 {{ route.dest }}</div>
+                                <div class="text-[11px] text-amber-700 font-medium mt-0.5">
+                                    <i class="fa-solid fa-triangle-exclamation mr-1"></i>{{ route.serviceNote }}
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-[11px] bg-slate-200 text-slate-600 px-2 py-1 rounded font-semibold whitespace-nowrap">
+                            暫停服務
+                        </span>
+                    </div>
+                </template>
+
+            </div>
+        </main>
+
+        <!-- Map View Area -->
+        <main v-show="viewMode === 'map'" class="flex-1 relative min-h-[400px]">
+            <div id="mapContainer" class="w-full h-full min-h-[500px] z-10"></div>
+            <div class="absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl shadow-lg z-20 border border-slate-200">
+                <div class="flex items-start space-x-2.5">
+                    <i class="fa-solid fa-school text-blue-900 text-lg mt-0.5"></i>
+                    <div class="flex-1 text-xs">
+                        <div class="font-bold text-slate-900">聖公會李炳中學 (和宜合道 450 號)</div>
+                        <div class="text-slate-500 mt-0.5 leading-snug">
+                            地圖已標示 2 個主要候車位置：<br>
+                            • 可風中學 站：往荃灣 / 葵芳 / 葵涌 / 九龍 / 港島<br>
+                            • 可風中學對面 站 (WO04-N-1400-0)：往城門隧道 / 沙田 / 大埔 / 北區
                         </div>
                     </div>
                 </div>
             </div>
+        </main>
+
+        <!-- Route Detail Drawer / Modal -->
+        <div v-if="activeRoute" class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-sm" @click.self="activeRoute = null">
+            <div class="bg-white w-full max-w-md rounded-t-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col animate-slide-up">
+                
+                <!-- Drawer Header -->
+                <div class="p-4 bg-blue-900 text-white flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xl font-black px-2.5 py-0.5 rounded bg-amber-400 text-blue-950">{{ activeRoute?.code }}</span>
+                        <div>
+                            <h3 class="font-bold text-sm">往 {{ activeRoute?.dest }}</h3>
+                            <p class="text-xs text-blue-200">全程車費 ${{ Number(activeRoute?.fare || 0).toFixed(1) }}</p>
+                        </div>
+                    </div>
+                    <button @click="activeRoute = null" class="text-white/80 hover:text-white p-1">
+                        <i class="fa-solid fa-xmark text-xl"></i>
+                    </button>
+                </div>
+
+                <!-- Stop List -->
+                <div class="p-4 overflow-y-auto flex-1 space-y-3 text-xs">
+                    <div class="font-bold text-slate-500 uppercase tracking-wider mb-2">沿途主要停靠車站</div>
+                    <div v-for="(stop, idx) in activeRouteStops" :key="idx" class="flex items-start space-x-3 relative">
+                        <!-- Connector Line -->
+                        <div v-if="idx < activeRouteStops.length - 1" class="absolute left-2.5 top-4 w-0.5 h-full bg-slate-200 -z-0"></div>
+                        
+                        <!-- Stop Dot -->
+                        <div 
+                            class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] z-10 shrink-0"
+                            :class="stop.isHoFung ? 'bg-amber-400 text-blue-950 ring-4 ring-amber-100 font-black' : 'bg-slate-200 text-slate-600'">
+                            {{ idx + 1 }}
+                        </div>
+
+                        <!-- Stop Name -->
+                        <div class="flex-1 pb-3 border-b border-slate-100">
+                            <div class="font-bold" :class="stop.isHoFung ? 'text-blue-900 text-sm' : 'text-slate-800'">
+                                {{ stop.name }}
+                                <span v-if="stop.isHoFung" class="ml-1 text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">目前選定站</span>
+                            </div>
+                            <div class="text-[11px] text-slate-400 mt-0.5">{{ stop.area }}</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
         </div>
+
+        <!-- Bottom Navigation Bar -->
+        <nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-200 flex justify-around py-2 z-30 shadow-lg text-xs">
+            <button @click="viewMode = 'list'" class="flex flex-col items-center space-y-0.5" :class="viewMode === 'list' ? 'text-blue-900 font-bold' : 'text-slate-400'">
+                <i class="fa-solid fa-bus text-base"></i>
+                <span>即時到站</span>
+            </button>
+            <button @click="viewMode = 'map'" class="flex flex-col items-center space-y-0.5" :class="viewMode === 'map' ? 'text-blue-900 font-bold' : 'text-slate-400'">
+                <i class="fa-solid fa-map-location-dot text-base"></i>
+                <span>車站地圖</span>
+            </button>
+        </nav>
+
     </div>
 
-    <!-- BOTTOM NAVIGATION BAR -->
-    <nav class="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 grid grid-cols-4 py-2 z-20">
-        <button @click="currentTab = 'nearby'" :class="currentTab === 'nearby' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-gray-400'" class="flex flex-col items-center gap-1 transition">
-            <i data-lucide="bus" class="w-5 h-5"></i>
-            <span class="text-[10px]">附近車站</span>
-        </button>
+    <script>
+    // Helper function for formatted relative ETA times
+    function getFormattedTime(addMinutes) {
+        const d = new Date();
+        d.setMinutes(d.getMinutes() + addMinutes);
+        const hours = String(d.getHours()).padStart(2, '0');
+        const mins = String(d.getMinutes()).padStart(2, '0');
+        return `${hours}:${mins}`;
+    }
 
-        <button @click="currentTab = 'favorites'" :class="currentTab === 'favorites' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-gray-400'" class="flex flex-col items-center gap-1 transition relative">
-            <i data-lucide="star" class="w-5 h-5"></i>
-            <span class="text-[10px]">我的收藏</span>
-            <span v-if="favorites.length" class="absolute top-0 right-6 w-2 h-2 bg-amber-400 rounded-full"></span>
-        </button>
+    function generateHoFungRoutes(direction) {
+        if (direction === 'NORTH') {
+            // WO04-N-1400-0: 可風中學對面 (往城門隧道 / 沙田 / 大埔 / 北區 / 馬鞍山 / 青衣 312)
+            return [
+                { code: '73X', operator: 'KMB', origin: '荃灣 (如心廣場)', dest: '大埔中心 (經城隧)', fare: 11.1, wheelchair: true, crowd: '繁忙', isServiceActive: true, etas: [{ time: getFormattedTime(1), min: 1 }, { time: getFormattedTime(11), min: 11 }, { time: getFormattedTime(22), min: 22 }] },
+                { code: '312', operator: 'GMB', origin: '梨木樹邨', dest: '青衣站 (青衣城/經德士古道)', fare: 8.0, wheelchair: false, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(2), min: 2 }, { time: getFormattedTime(10), min: 10 }, { time: getFormattedTime(18), min: 18 }] },
+                { code: '47A', operator: 'KMB', origin: '葵芳(南)', dest: '水泉澳 (經沙田圍)', fare: 8.9, wheelchair: true, crowd: '舒適', isServiceActive: true, etas: [{ time: getFormattedTime(3), min: 3 }, { time: getFormattedTime(14), min: 14 }, { time: getFormattedTime(26), min: 26 }] },
+                { code: '278X', operator: 'KMB', origin: '荃灣 (如心廣場)', dest: '上水 (經粉嶺)', fare: 13.8, wheelchair: true, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(4), min: 4 }, { time: getFormattedTime(14), min: 14 }, { time: getFormattedTime(25), min: 25 }] },
+                { code: '47X', operator: 'KMB', origin: '葵芳(南)', dest: '秦石 (經沙田乙明)', fare: 8.9, wheelchair: true, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(5), min: 5 }, { time: getFormattedTime(16), min: 16 }, { time: getFormattedTime(28), min: 28 }] },
+                { code: '48X', operator: 'KMB', origin: '灣景花園', dest: '禾輋 (經沙田市中心)', fare: 8.9, wheelchair: true, crowd: '舒適', isServiceActive: true, etas: [{ time: getFormattedTime(6), min: 6 }, { time: getFormattedTime(17), min: 17 }, { time: getFormattedTime(29), min: 29 }] },
+                { code: '40X', operator: 'KMB', origin: '葵涌邨', dest: '烏溪沙站 (經馬鞍山)', fare: 9.6, wheelchair: true, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(7), min: 7 }, { time: getFormattedTime(19), min: 19 }, { time: getFormattedTime(31), min: 31 }] },
+                { code: '46X', operator: 'KMB', origin: '美孚', dest: '顯徑 (經大圍)', fare: 8.9, wheelchair: true, crowd: '繁忙', isServiceActive: true, etas: [{ time: getFormattedTime(9), min: 9 }, { time: getFormattedTime(21), min: 21 }, { time: getFormattedTime(33), min: 33 }] },
+                { code: '32', operator: 'KMB', origin: '奧運站', dest: '石圍角', fare: 7.5, wheelchair: true, crowd: '舒適', isServiceActive: true, etas: [{ time: getFormattedTime(6), min: 6 }, { time: getFormattedTime(18), min: 18 }, { time: getFormattedTime(30), min: 30 }] },
+                { code: '403', operator: 'GMB', origin: '梨貝街', dest: '沙角邨 (經沙田圍)', fare: 10.3, wheelchair: false, crowd: '繁忙', isServiceActive: true, etas: [{ time: getFormattedTime(1), min: 1 }, { time: getFormattedTime(8), min: 8 }, { time: getFormattedTime(16), min: 16 }] },
+                { code: '403A', operator: 'GMB', origin: '安蔭', dest: '沙田大會堂', fare: 10.3, wheelchair: false, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(6), min: 6 }, { time: getFormattedTime(15), min: 15 }, { time: getFormattedTime(25), min: 25 }] },
+                { code: '403X', operator: 'GMB', origin: '石籬', dest: '大圍站', fare: 10.3, wheelchair: false, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(8), min: 8 }, { time: getFormattedTime(20), min: 20 }, { time: getFormattedTime(32), min: 32 }] },
+                { code: '94', operator: 'GMB', origin: '葵盛', dest: '石圍角', fare: 5.8, wheelchair: false, crowd: '舒適', isServiceActive: true, etas: [{ time: getFormattedTime(12), min: 12 }, { time: getFormattedTime(25), min: 25 }, { time: getFormattedTime(38), min: 38 }] },
+                
+                // Inactive Special / Peak-only / Night routes
+                { code: '40E', operator: 'KMB', origin: '葵芳站', dest: '泥涌', fare: 9.6, wheelchair: true, isServiceActive: false, serviceNote: '黃昏特別線 (僅限下午繁忙時段)', etas: [] },
+                { code: '43S', operator: 'KMB', origin: '石蔭', dest: '香港科學園', fare: 9.6, wheelchair: true, isServiceActive: false, serviceNote: '晨早特別線 (僅限早繁忙時段)', etas: [] },
+                { code: '73P', operator: 'KMB', origin: '荃灣 (如心廣場)', dest: '大美督', fare: 11.1, wheelchair: true, isServiceActive: false, serviceNote: '黃昏特別線 (僅限下午繁忙時段)', etas: [] },
+                { code: '234C', operator: 'KMB', origin: '觀塘(翠屏北邨)', dest: '青龍頭', fare: 10.7, wheelchair: true, isServiceActive: false, serviceNote: '黃昏特別線 (僅限下午繁忙時段)', etas: [] },
+                { code: '278A', operator: 'KMB', origin: '荃灣 (如心廣場)', dest: '粉嶺 (皇后山)', fare: 13.8, wheelchair: true, isServiceActive: false, serviceNote: '非服務時間', etas: [] },
+                { code: '936', operator: 'KMB', origin: '銅鑼灣 (棉花路)', dest: '石圍角', fare: 19.3, wheelchair: true, isServiceActive: false, serviceNote: '非服務時間', etas: [] },
+                { code: 'N36', operator: 'KMB', origin: '梨木樹', dest: '荃灣站', fare: 5.4, wheelchair: true, isServiceActive: false, serviceNote: '通宵線 (僅深夜 00:45-02:15 服務)', etas: [] }
+            ];
+        } else {
+            // SOUTH: 可風中學 (合併所有往荃灣 / 葵芳 / 葵涌 / 梨木樹 312 / 九龍 / 港島方向路線)
+            return [
+                { code: '73X', operator: 'KMB', origin: '大埔中心', dest: '荃灣 (如心廣場)', fare: 11.1, wheelchair: true, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(1), min: 1 }, { time: getFormattedTime(10), min: 10 }, { time: getFormattedTime(20), min: 20 }] },
+                { code: '312', operator: 'GMB', origin: '青衣站 (青衣城)', dest: '梨木樹邨', fare: 8.0, wheelchair: false, crowd: '舒適', isServiceActive: true, etas: [{ time: getFormattedTime(2), min: 2 }, { time: getFormattedTime(9), min: 9 }, { time: getFormattedTime(17), min: 17 }] },
+                { code: '278X', operator: 'KMB', origin: '上水', dest: '荃灣 (如心廣場)', fare: 13.8, wheelchair: true, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(3), min: 3 }, { time: getFormattedTime(15), min: 15 }, { time: getFormattedTime(27), min: 27 }] },
+                { code: '47A', operator: 'KMB', origin: '水泉澳', dest: '葵芳(南) (經葵興)', fare: 8.9, wheelchair: true, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(4), min: 4 }, { time: getFormattedTime(13), min: 13 }, { time: getFormattedTime(25), min: 25 }] },
+                { code: '48X', operator: 'KMB', origin: '禾輋', dest: '荃灣 (灣景花園)', fare: 8.9, wheelchair: true, crowd: '舒適', isServiceActive: true, etas: [{ time: getFormattedTime(5), min: 5 }, { time: getFormattedTime(17), min: 17 }, { time: getFormattedTime(29), min: 29 }] },
+                { code: '47X', operator: 'KMB', origin: '秦石', dest: '葵芳(南) (經葵興)', fare: 8.9, wheelchair: true, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(6), min: 6 }, { time: getFormattedTime(16), min: 16 }, { time: getFormattedTime(28), min: 28 }] },
+                { code: '36', operator: 'KMB', origin: '荃灣西站', dest: '梨木樹 (循環線)', fare: 4.7, wheelchair: true, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(6), min: 6 }, { time: getFormattedTime(16), min: 16 }, { time: getFormattedTime(26), min: 26 }] },
+                { code: '32', operator: 'KMB', origin: '石圍角', dest: '奧運站 (經旺角)', fare: 7.5, wheelchair: true, crowd: '舒適', isServiceActive: true, etas: [{ time: getFormattedTime(7), min: 7 }, { time: getFormattedTime(21), min: 21 }, { time: getFormattedTime(32), min: 32 }] },
+                { code: '40X', operator: 'KMB', origin: '烏溪沙站', dest: '葵涌邨 (經葵興)', fare: 9.6, wheelchair: true, crowd: '舒適', isServiceActive: true, etas: [{ time: getFormattedTime(8), min: 8 }, { time: getFormattedTime(20), min: 20 }, { time: getFormattedTime(31), min: 31 }] },
+                { code: '46X', operator: 'KMB', origin: '顯徑', dest: '美孚 (經葵芳)', fare: 8.9, wheelchair: true, crowd: '繁忙', isServiceActive: true, etas: [{ time: getFormattedTime(10), min: 10 }, { time: getFormattedTime(23), min: 23 }, { time: getFormattedTime(35), min: 35 }] },
+                { code: '403', operator: 'GMB', origin: '沙角邨', dest: '葵涌邨 / 梨貝街', fare: 10.3, wheelchair: false, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(3), min: 3 }, { time: getFormattedTime(12), min: 12 }, { time: getFormattedTime(21), min: 21 }] },
+                { code: '403A', operator: 'GMB', origin: '沙田大會堂', dest: '安蔭', fare: 10.3, wheelchair: false, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(5), min: 5 }, { time: getFormattedTime(16), min: 16 }, { time: getFormattedTime(26), min: 26 }] },
+                { code: '403X', operator: 'GMB', origin: '大圍站', dest: '石籬 (梨貝街)', fare: 10.3, wheelchair: false, crowd: '普通', isServiceActive: true, etas: [{ time: getFormattedTime(7), min: 7 }, { time: getFormattedTime(18), min: 18 }, { time: getFormattedTime(28), min: 28 }] },
+                { code: '94', operator: 'GMB', origin: '石圍角', dest: '葵盛', fare: 5.8, wheelchair: false, crowd: '舒適', isServiceActive: true, etas: [{ time: getFormattedTime(5), min: 5 }, { time: getFormattedTime(14), min: 14 }, { time: getFormattedTime(24), min: 24 }] },
+                { code: '278A', operator: 'KMB', origin: '粉嶺 (皇后山)', dest: '荃灣 (如心廣場)', fare: 13.8, wheelchair: true, isServiceActive: true, crowd: '舒適', etas: [{ time: getFormattedTime(9), min: 9 }, { time: getFormattedTime(22), min: 22 }, { time: getFormattedTime(35), min: 35 }] },
+                
+                // Inactive Special Peak routes
+                { code: '40E', operator: 'KMB', origin: '泥涌', dest: '葵涌 (葵芳邨)', fare: 9.6, wheelchair: true, isServiceActive: false, serviceNote: '晨早特別線 (僅限早繁忙單向)', etas: [] },
+                { code: '40P', operator: 'KMB', origin: '荃灣 (如心廣場)', dest: '觀塘碼頭', fare: 10.7, wheelchair: true, isServiceActive: false, serviceNote: '晨早/黃昏特別線', etas: [] },
+                { code: '43S', operator: 'KMB', origin: '香港科學園', dest: '石蔭', fare: 9.6, wheelchair: true, isServiceActive: false, serviceNote: '下午特別線 (僅限下班時間)', etas: [] },
+                { code: '73D', operator: 'KMB', origin: '廣福街市', dest: '荃灣 (如心廣場)', fare: 11.1, wheelchair: true, isServiceActive: false, serviceNote: '晨早特別線 (僅限早繁忙單向)', etas: [] },
+                { code: '73F', operator: 'KMB', origin: '香港教育大學', dest: '荃灣 (如心廣場)', fare: 11.1, wheelchair: true, isServiceActive: false, serviceNote: '下午特別線 (僅限下班時間)', etas: [] },
+                { code: '73P', operator: 'KMB', origin: '大美督', dest: '荃灣 (如心廣場)', fare: 11.1, wheelchair: true, isServiceActive: false, serviceNote: '晨早特別線 (僅限早繁忙單向)', etas: [] },
+                { code: '234C', operator: 'KMB', origin: '青龍頭', dest: '觀塘 (翠屏北邨)', fare: 10.7, wheelchair: true, isServiceActive: false, serviceNote: '晨早特別線 (僅限早繁忙單向)', etas: [] },
+                { code: '273C', operator: 'KMB', origin: '九龍坑', dest: '荃灣西站', fare: 13.8, wheelchair: true, isServiceActive: false, serviceNote: '晨早特別線 (僅限早繁忙單向)', etas: [] },
+                { code: '273P', operator: 'KMB', origin: '太和', dest: '荃灣西站', fare: 13.8, wheelchair: true, isServiceActive: false, serviceNote: '晨早特別線 (僅限早繁忙單向)', etas: [] },
+                { code: '278P', operator: 'KMB', origin: '上水 (太平)', dest: '荃灣 (如心廣場)', fare: 13.8, wheelchair: true, isServiceActive: false, serviceNote: '晨早特別線 (僅限早繁忙單向)', etas: [] },
+                { code: '936', operator: 'KMB', origin: '荃灣 (石圍角)', dest: '銅鑼灣 (棉花路)', fare: 19.3, wheelchair: true, isServiceActive: false, serviceNote: '晨早/日間單向前往港島', etas: [] },
+                { code: 'N36', operator: 'KMB', origin: '荃灣站', dest: '梨木樹 (循環線)', fare: 5.4, wheelchair: true, isServiceActive: false, serviceNote: '通宵線 (僅深夜 00:45-02:15 服務)', etas: [] }
+            ];
+        }
+    }
 
-        <button @click="currentTab = 'planner'" :class="currentTab === 'planner' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-gray-400'" class="flex flex-col items-center gap-1 transition">
-            <i data-lucide="route" class="w-5 h-5"></i>
-            <span class="text-[10px]">路線規劃</span>
-        </button>
+    const { createApp, ref, computed, onMounted, onUnmounted, watch, nextTick } = Vue;
 
-        <button @click="currentTab = 'alerts'" :class="currentTab === 'alerts' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-gray-400'" class="flex flex-col items-center gap-1 transition">
-            <i data-lucide="bell" class="w-5 h-5"></i>
-            <span class="text-[10px]">交通通告</span>
-        </button>
-    </nav>
+    createApp({
+        setup() {
+            // Default active station view
+            const currentDirection = ref('SOUTH');
+            const selectedOp = ref('ALL');
+            const searchQuery = ref('');
+            const viewMode = ref('list');
+            const isRefreshing = ref(false);
+            const autoRefreshTimer = ref(10);
+            const activeRoute = ref(null);
+            let timerInterval = null;
+            let leafletMap = null;
 
-</div>
+            const operators = [
+                { id: 'ALL', label: '全部', activeClass: 'bg-slate-900 text-white font-bold' },
+                { id: 'KMB', label: '九巴', activeClass: 'bg-red-600 text-white font-bold' },
+                { id: 'GMB', label: '小巴', activeClass: 'bg-emerald-600 text-white font-bold' }
+            ];
 
-<script>
-const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
+            const filteredStops = computed(() => {
+                let routes = generateHoFungRoutes(currentDirection.value);
 
-createApp({
-    setup() {
-        const isDark = ref(false);
-        const currentTab = ref('nearby');
-        const viewMode = ref('list');
-        const selectedOp = ref('ALL');
-        const searchQuery = ref('');
-        const locationSearchQuery = ref('');
-        const isRefreshing = ref(false);
-        const alarmActive = ref(false);
-        const gpsBlockedNotice = ref(false);
-        const trafficAlert = ref('特別提示: 告士打道東行近波斯富街段交通繁忙，部分班次可能延誤 5-10 分鐘。');
+                if (selectedOp.value !== 'ALL') {
+                    routes = routes.filter(r => r.operator === selectedOp.value);
+                }
 
-        const destinationTarget = ref('美孚 / 荔枝角');
-        const planResult = ref(null);
+                if (searchQuery.value.trim() !== '') {
+                    const q = searchQuery.value.trim().toLowerCase();
+                    routes = routes.filter(r => 
+                        r.code.toLowerCase().includes(q) ||
+                        r.dest.toLowerCase().includes(q) ||
+                        r.origin.toLowerCase().includes(q)
+                    );
+                }
 
-        // Active modal route details
-        const activeRoute = ref(null);
+                routes.sort((a, b) => {
+                    if (a.isServiceActive && !b.isServiceActive) return -1;
+                    if (!a.isServiceActive && b.isServiceActive) return 1;
+                    if (!a.isServiceActive && !b.isServiceActive) return a.code.localeCompare(b.code);
+                    
+                    const minA = (a.etas && a.etas.length > 0) ? a.etas[0].min : 999;
+                    const minB = (b.etas && b.etas.length > 0) ? b.etas[0].min : 999;
+                    return minA - minB;
+                });
 
-        // GPS state variables
-        const isLocating = ref(false);
-        const gpsStatusText = ref('未定位');
-        const gpsStatusClass = ref('bg-gray-700 text-gray-300');
-        const userCustomLocation = ref(null);
+                return routes;
+            });
 
-        // Map reference
-        let leafletMap = null;
-        let mapMarkers = [];
-
-        // Extended Preset Locations covering 18 districts
-        const presetLocations = [
-            { name: "旺角 雅蘭中心 (Mong Kok)", region: "KlnNT", lat: 22.3193, lng: 114.1694, district: "旺角" },
-            { name: "觀塘 市中心 (Kwun Tong)", region: "KlnNT", lat: 22.3132, lng: 114.2258, district: "觀塘" },
-            { name: "荃灣 荃灣廣場 (Tsuen Wan)", region: "KlnNT", lat: 22.3708, lng: 114.1113, district: "荃灣" },
-            { name: "屯門 市中心 (Tuen Mun)", region: "KlnNT", lat: 22.3908, lng: 113.9772, district: "屯門" },
-            { name: "元朗 大棠路 (Yuen Long)", region: "KlnNT", lat: 22.4445, lng: 114.0289, district: "元朗" },
-            { name: "沙田 新城市廣場 (Shatin)", region: "KlnNT", lat: 22.3814, lng: 114.1887, district: "沙田" },
-            { name: "大埔 墟鐵路站 (Tai Po)", region: "KlnNT", lat: 22.4447, lng: 114.1706, district: "大埔" },
-            { name: "將軍澳 坑口 (Tseung Kwan O)", region: "KlnNT", lat: 22.3156, lng: 114.2642, district: "將軍澳" },
-            { name: "尖沙咀 碼頭 (Tsim Sha Tsui)", region: "KlnNT", lat: 22.2936, lng: 114.1685, district: "尖沙咀" },
-            { name: "深水埗 欽州街 (Sham Shui Po)", region: "KlnNT", lat: 22.3308, lng: 114.1622, district: "深水埗" },
-            { name: "銅鑼灣 崇光百貨 (CWB Sogo)", region: "HK", lat: 22.2803, lng: 114.1843, district: "銅鑼灣" },
-            { name: "中環 環球大廈 (Central)", region: "HK", lat: 22.2819, lng: 114.1582, district: "中環" },
-            { name: "灣仔 柯布連道 (Wan Chai)", region: "HK", lat: 22.2778, lng: 114.1722, district: "灣仔" },
-            { name: "鰂魚涌 太古城 (Taikoo)", region: "HK", lat: 22.2863, lng: 114.2163, district: "鰂魚涌" },
-            { name: "東涌 纜車站 (Tung Chung)", region: "KlnNT", lat: 22.2892, lng: 113.9392, district: "東涌" }
-        ];
-        const selectedPresetLocationIndex = ref(0);
-
-        // Dynamic Bus Stops Data
-        const busStopsData = ref([]);
-
-        // Favorites reactive store
-        const favorites = ref([
-            { code: '102', operator: 'KMB', dest: '美孚', stopName: '旺角 雅蘭中心', stopId: 'stop_1', etas: [{ time: '10:14', min: 3 }] }
-        ]);
-
-        // Traffic announcements
-        const announcements = ref([
-            { id: 1, source: '運輸署消息', time: '10:15', title: '告士打道交通繁重', content: '告士打道東行近波斯富街交通繁忙，駕駛人士請忍讓，巴士路線服務或受影響。' },
-            { id: 2, source: '九巴通告', time: '09:40', title: '特別改道安排', content: '因應地區工程，部分行經彌敦道之路線將臨時調整停靠車站。' },
-            { id: 3, source: '城巴通告', time: '08:30', title: '機場特快 A11 加開班次', content: '因應旅遊高峰，A11 線於繁忙時間將會加開特快班次服務市民。' }
-        ]);
-
-        const generateRoutesForDistrict = (districtName) => {
-            const routesMap = {
-                '旺角': [
-                    { code: '102', operator: 'KMB', dest: '美孚', fare: 11.1, wheelchair: true, crowd: '舒適', etas: [{ time: '10:14', min: 3 }, { time: '10:25', min: 14 }] },
-                    { code: '1A', operator: 'KMB', dest: '尖沙咀碼頭', fare: 7.6, wheelchair: true, crowd: '繁忙', etas: [{ time: '10:12', min: 1 }, { time: '10:20', min: 9 }] },
-                    { code: '970', operator: 'CTB', dest: '數碼港', fare: 12.8, wheelchair: true, crowd: '普通', etas: [{ time: '10:18', min: 7 }, { time: '10:30', min: 19 }] },
-                    { code: '27M', operator: 'GMB', dest: '樂民新村', fare: 8.5, wheelchair: false, crowd: '舒適', etas: [{ time: '10:15', min: 4 }, { time: '10:22', min: 11 }] }
-                ],
-                '荃灣': [
-                    { code: '30X', operator: 'KMB', dest: '黃埔花園', fare: 9.4, wheelchair: true, crowd: '舒適', etas: [{ time: '10:11', min: 2 }, { time: '10:23', min: 14 }] },
-                    { code: '238M', operator: 'KMB', dest: '荃灣站', fare: 4.1, wheelchair: true, crowd: '普通', etas: [{ time: '10:16', min: 7 }, { time: '10:24', min: 15 }] },
-                    { code: '930', operator: 'CTB', dest: '灣仔北', fare: 18.2, wheelchair: true, crowd: '繁忙', etas: [{ time: '10:20', min: 11 }, { time: '10:32', min: 23 }] }
-                ],
-                '觀塘': [
-                    { code: '1A', operator: 'KMB', dest: '中秀茂坪', fare: 7.6, wheelchair: true, crowd: '繁忙', etas: [{ time: '10:13', min: 2 }, { time: '10:21', min: 10 }] },
-                    { code: '89D', operator: 'KMB', dest: '烏溪沙站', fare: 9.8, wheelchair: true, crowd: '普通', etas: [{ time: '10:17', min: 6 }, { time: '10:29', min: 18 }] },
-                    { code: '601', operator: 'CTB', dest: '寶達', fare: 11.4, wheelchair: true, crowd: '舒適', etas: [{ time: '10:22', min: 11 }, { time: '10:35', min: 24 }] }
-                ],
-                '沙田': [
-                    { code: '81C', operator: 'KMB', dest: '尖沙咀東', fare: 9.4, wheelchair: true, crowd: '普通', etas: [{ time: '10:15', min: 4 }, { time: '10:28', min: 17 }] },
-                    { code: '170', operator: 'CTB', dest: '華富', fare: 18.2, wheelchair: true, crowd: '繁忙', etas: [{ time: '10:19', min: 8 }, { time: '10:33', min: 22 }] },
-                    { code: '88K', operator: 'KMB', dest: '駿景園', fare: 5.0, wheelchair: true, crowd: '舒適', etas: [{ time: '10:21', min: 10 }, { time: '10:30', min: 19 }] }
-                ]
+            const setDirection = (dir) => {
+                currentDirection.value = dir;
+                refreshETA(false);
             };
 
-            return routesMap[districtName] || [
-                { code: '102', operator: 'KMB', dest: '美孚', fare: 11.1, wheelchair: true, crowd: '舒適', etas: [{ time: '10:14', min: 3 }, { time: '10:25', min: 14 }] },
-                { code: '1A', operator: 'KMB', dest: '尖沙咀碼頭', fare: 7.6, wheelchair: true, crowd: '繁忙', etas: [{ time: '10:12', min: 1 }, { time: '10:20', min: 9 }] },
-                { code: '970', operator: 'CTB', dest: '數碼港', fare: 12.8, wheelchair: true, crowd: '普通', etas: [{ time: '10:18', min: 7 }, { time: '10:30', min: 19 }] }
-            ];
-        };
-
-        // Calculate closest known Hong Kong district name based on coordinates
-        const getNearestDistrictName = (lat, lng) => {
-            let minDist = Infinity;
-            let closestName = '旺角';
-            presetLocations.forEach(loc => {
-                const dist = Math.hypot(loc.lat - lat, loc.lng - lng);
-                if (dist < minDist) {
-                    minDist = dist;
-                    closestName = loc.district || loc.name.split(' ')[0];
+            const getOperatorBadgeClass = (op) => {
+                switch(op) {
+                    case 'KMB': return 'bg-red-600 text-white';
+                    case 'GMB': return 'bg-emerald-600 text-white';
+                    default: return 'bg-blue-600 text-white';
                 }
-            });
-            return closestName;
-        };
+            };
 
-        // Query OpenStreetMap reverse geocoding
-        const fetchLocationName = async (lat, lng) => {
-            try {
-                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=16&accept-language=zh-HK`);
-                if (response.ok) {
-                    const data = await response.json();
-                    const addr = data.address || {};
-                    const place = addr.suburb || addr.neighbourhood || addr.quarter || addr.district || addr.road || addr.town || addr.city_district;
-                    if (place) return place;
-                }
-            } catch (e) {
-                console.warn('Reverse geocode fallback:', e);
-            }
-            return getNearestDistrictName(lat, lng);
-        };
-
-        // Computed property for display name across UI
-        const currentLocationDisplayName = computed(() => {
-            if (selectedPresetLocationIndex.value === 'user' && userCustomLocation.value) {
-                return userCustomLocation.value.name || 'GPS 定位地點';
-            }
-            const idx = typeof selectedPresetLocationIndex.value === 'number' ? selectedPresetLocationIndex.value : 0;
-            return presetLocations[idx] ? presetLocations[idx].name : '旺角 雅蘭中心';
-        });
-
-        // Filtered Stops based on Search and Operator selection
-        const filteredStops = computed(() => {
-            if (!busStopsData.value) return [];
-            return busStopsData.value.map(stop => {
-                const filteredRoutes = stop.routes.filter(r => {
-                    const matchOp = selectedOp.value === 'ALL' || r.operator === selectedOp.value;
-                    const q = searchQuery.value.trim().toLowerCase();
-                    const matchSearch = !q || r.code.toLowerCase().includes(q) || r.dest.toLowerCase().includes(q);
-                    return matchOp && matchSearch;
+            const refreshETA = (manual = false) => {
+                if (manual) isRefreshing.value = true;
+                
+                const routes = generateHoFungRoutes(currentDirection.value);
+                routes.forEach(r => {
+                    if (r.isServiceActive && r.etas && r.etas.length > 0) {
+                        r.etas.forEach(e => {
+                            if (manual) {
+                                e.min = Math.max(1, e.min - 1);
+                                e.time = getFormattedTime(e.min);
+                            }
+                        });
+                    }
                 });
-                return { ...stop, routes: filteredRoutes };
-            }).filter(stop => stop.routes.length > 0);
-        });
 
-        // Computed active route detail stops sequence
-        const activeRouteDetailStops = computed(() => {
-            if (!activeRoute.value) return [];
-            const currentLoc = currentLocationDisplayName.value.split(' ')[0];
-            return [
-                { name: `${currentLoc} 主幹道總站`, location: '巴士總站', eta: '已到站', isCurrent: false },
-                { name: `${currentLoc} 雅蘭中心 / 分站`, location: '分站 1', eta: '即將到達', isCurrent: true },
-                { name: '海底隧道轉乘站', location: '過海巴士站', eta: '8 分鐘', isCurrent: false },
-                { name: `${activeRoute.value.dest} 總站`, location: '終點站', eta: '24 分鐘', isCurrent: false }
-            ];
-        });
-
-        const getOriginalIndex = (loc) => {
-            return presetLocations.findIndex(l => l.name === loc.name);
-        };
-
-        const filterLocationByName = () => {
-            if (!locationSearchQuery.value) return;
-            const q = locationSearchQuery.value.trim().toLowerCase();
-            const foundIdx = presetLocations.findIndex(l => 
-                l.name.toLowerCase().includes(q) || 
-                l.district.toLowerCase().includes(q)
-            );
-            if (foundIdx !== -1) {
-                selectedPresetLocationIndex.value = foundIdx;
-                changeLocation();
-            }
-        };
-
-        const operators = [
-            { id: 'ALL', label: '全部', activeClass: 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900' },
-            { id: 'KMB', label: '九巴', activeClass: 'bg-red-600 text-white' },
-            { id: 'CTB', label: '城巴', activeClass: 'bg-amber-400 text-slate-900 font-bold' },
-            { id: 'GMB', label: '小巴', activeClass: 'bg-emerald-600 text-white' }
-        ];
-
-        const updateStopsForCoordinates = (lat, lng, name) => {
-            const placeName = name || getNearestDistrictName(lat, lng);
-            const routes = generateRoutesForDistrict(placeName);
-            
-            busStopsData.value = [
-                {
-                    id: 'stop_1',
-                    name: `${placeName} (主幹道巴士站)`,
-                    distance: 75,
-                    lat: lat + 0.0005,
-                    lng: lng + 0.0004,
-                    routes: routes
-                },
-                {
-                    id: 'stop_2',
-                    name: `${placeName} (轉乘站 / 分站)`,
-                    distance: 230,
-                    lat: lat - 0.0010,
-                    lng: lng - 0.0007,
-                    routes: [
-                        { code: '960', operator: 'KMB', dest: '屯門建生', fare: 21.9, wheelchair: true, crowd: '暢通', etas: [{ time: '10:23', min: 6 }] },
-                        { code: 'A11', operator: 'CTB', dest: '機場', fare: 41.9, wheelchair: true, crowd: '暢通', etas: [{ time: '10:31', min: 14 }] }
-                    ]
+                autoRefreshTimer.value = 10;
+                if (manual) {
+                    setTimeout(() => { isRefreshing.value = false; }, 400);
                 }
-            ];
-        };
+            };
 
-        const getCurrentLocationObj = () => {
-            if (selectedPresetLocationIndex.value === 'user' && userCustomLocation.value) {
-                return { name: userCustomLocation.value.name, ...userCustomLocation.value };
-            }
-            const idx = typeof selectedPresetLocationIndex.value === 'number' ? selectedPresetLocationIndex.value : 0;
-            return presetLocations[idx] || presetLocations[0];
-        };
-
-        const renderMapMarkers = () => {
-            if (!leafletMap) return;
-            mapMarkers.forEach(m => leafletMap.removeLayer(m));
-            mapMarkers = [];
-
-            const loc = getCurrentLocationObj();
-            // User current location marker
-            const userMarker = L.circleMarker([loc.lat, loc.lng], {
-                radius: 8,
-                fillColor: '#3B82F6',
-                color: '#FFFFFF',
-                weight: 3,
-                opacity: 1,
-                fillOpacity: 0.9
-            }).addTo(leafletMap).bindPopup(`<b>${currentLocationDisplayName.value}</b><br>你目前的位置`);
-            mapMarkers.push(userMarker);
-
-            // Bus stops markers
-            busStopsData.value.forEach(stop => {
-                const marker = L.marker([stop.lat, stop.lng]).addTo(leafletMap)
-                    .bindPopup(`<b>${stop.name}</b><br>距離: ${stop.distance}米`);
-                mapMarkers.push(marker);
+            const activeRouteStops = computed(() => {
+                if (!activeRoute.value) return [];
+                return [
+                    { name: activeRoute.value.origin, area: '總站開出', isHoFung: false },
+                    { name: '梨木樹邨', area: '和宜合道', isHoFung: false },
+                    { 
+                        name: currentDirection.value === 'NORTH' ? '可風中學對面站 (WO04-N-1400-0)' : '可風中學站 (WO04-S)', 
+                        area: '和宜合道 (可風中學門口/對面)', 
+                        isHoFung: true 
+                    },
+                    { name: '城門隧道轉車站', area: '城門隧道公路', isHoFung: false },
+                    { name: activeRoute.value.dest, area: '終點站', isHoFung: false }
+                ];
             });
-        };
 
-        const switchMode = (mode) => {
-            viewMode.value = mode;
-            if (mode === 'map') {
-                nextTick(() => {
-                    const loc = getCurrentLocationObj();
-                    if (!leafletMap) {
-                        leafletMap = L.map('map').setView([loc.lat, loc.lng], 16);
-                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                            attribution: '&copy; OpenStreetMap'
-                        }).addTo(leafletMap);
+            const openModal = (route) => {
+                activeRoute.value = route;
+            };
+
+            const startTimer = () => {
+                timerInterval = setInterval(() => {
+                    if (autoRefreshTimer.value > 1) {
+                        autoRefreshTimer.value--;
                     } else {
-                        leafletMap.setView([loc.lat, loc.lng], 16);
+                        refreshETA(false);
                     }
-                    renderMapMarkers();
-                    leafletMap.invalidateSize();
-                });
-            }
-        };
+                }, 1000);
+            };
 
-        const getUserLocation = () => {
-            gpsBlockedNotice.value = false;
-            
-            if (!navigator.geolocation) {
-                gpsStatusText.value = '不支援 GPS';
-                gpsStatusClass.value = 'bg-red-500/20 text-red-400';
-                gpsBlockedNotice.value = true;
-                return;
-            }
-
-            isLocating.value = true;
-            gpsStatusText.value = '定位中...';
-            gpsStatusClass.value = 'bg-amber-500/20 text-amber-400';
-
-            navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                    isLocating.value = false;
-                    const lat = position.coords.latitude;
-                    const lng = position.coords.longitude;
-
-                    let locationName = getNearestDistrictName(lat, lng);
-
-                    userCustomLocation.value = { lat, lng, name: locationName };
-                    selectedPresetLocationIndex.value = 'user';
+            const initMap = () => {
+                try {
+                    if (leafletMap) return;
                     
-                    gpsStatusText.value = `📍 ${locationName}`;
-                    gpsStatusClass.value = 'bg-emerald-500/20 text-emerald-400';
+                    const hoFungLat = 22.380255;
+                    const hoFungLng = 114.135096;
 
-                    updateStopsForCoordinates(lat, lng, locationName);
-                    renderMapMarkers();
+                    leafletMap = L.map('mapContainer').setView([hoFungLat, hoFungLng], 18);
+                    
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; OpenStreetMap'
+                    }).addTo(leafletMap);
 
-                    const exactName = await fetchLocationName(lat, lng);
-                    if (exactName && userCustomLocation.value) {
-                        userCustomLocation.value.name = exactName;
-                        gpsStatusText.value = `📍 ${exactName}`;
-                        updateStopsForCoordinates(lat, lng, exactName);
-                        renderMapMarkers();
+                    // Southbound Stop (可風中學門口站: 往荃灣 / 葵芳 / 葵涌 / 梨木樹 312 / 九龍 / 港島)
+                    const southMarker = L.marker([22.380120, 114.135000]).addTo(leafletMap)
+                        .bindPopup(`
+                            <div class="p-1">
+                                <b class="text-blue-900 text-xs">可風中學 站</b>
+                                <p class="text-[11px] text-slate-600 mt-0.5">位置: 可風中學門口外 (和宜合道 448 號)</p>
+                                <p class="text-[10px] text-emerald-700 font-bold mt-0.5">往 荃灣 / 葵芳 / 葵涌 / 梨木樹(312) / 九龍 / 港島</p>
+                            </div>
+                        `);
+
+                    // Northbound Stop (WO04-N-1400-0: 可風中學對面站 - 往城隧/沙田/大埔/青衣 312)
+                    const northMarker = L.marker([22.380380, 114.135250]).addTo(leafletMap)
+                        .bindPopup(`
+                            <div class="p-1">
+                                <b class="text-blue-900 text-xs">可風中學對面 (WO04-N-1400-0)</b>
+                                <p class="text-[11px] text-slate-600 mt-0.5">位置: 三棟屋村對面候車亭</p>
+                                <p class="text-[10px] text-amber-700 font-bold mt-0.5">往 城門隧道 / 沙田 / 大埔 / 青衣(312) / 上水</p>
+                            </div>
+                        `);
+
+                    if (currentDirection.value === 'SOUTH') {
+                        southMarker.openPopup();
+                    } else {
+                        northMarker.openPopup();
                     }
-                },
-                (error) => {
-                    isLocating.value = false;
-                    gpsStatusText.value = 'GPS 權限受限';
-                    gpsStatusClass.value = 'bg-red-500/20 text-red-400';
-                    gpsBlockedNotice.value = true;
 
-                    const loc = getCurrentLocationObj();
-                    updateStopsForCoordinates(loc.lat, loc.lng, loc.name);
-                },
-                { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
-            );
-        };
-
-        const changeLocation = () => {
-            const loc = getCurrentLocationObj();
-            updateStopsForCoordinates(loc.lat, loc.lng, loc.name);
-            if (leafletMap) {
-                leafletMap.setView([loc.lat, loc.lng], 16);
-                renderMapMarkers();
-            }
-            refreshETA();
-        };
-
-        const refreshETA = () => {
-            isRefreshing.value = true;
-            setTimeout(() => {
-                isRefreshing.value = false;
-            }, 800);
-        };
-
-        const toggleDarkMode = () => {
-            isDark.value = !isDark.value;
-            if (isDark.value) {
-                document.documentElement.classList.add('dark');
-            } else {
-                document.documentElement.classList.remove('dark');
-            }
-        };
-
-        const isFavorite = (code, stopId) => {
-            return favorites.value.some(f => f.code === code && f.stopId === stopId);
-        };
-
-        const toggleFavorite = (route, stop) => {
-            const idx = favorites.value.findIndex(f => f.code === route.code && f.stopId === stop.id);
-            if (idx !== -1) {
-                favorites.value.splice(idx, 1);
-            } else {
-                favorites.value.push({
-                    code: route.code,
-                    operator: route.operator,
-                    dest: route.dest,
-                    stopName: stop.name || stop.stopName,
-                    stopId: stop.id || stop.stopId,
-                    etas: route.etas || [{ time: '10:15', min: 4 }]
-                });
-            }
-        };
-
-        const openRouteDetail = (route, stop) => {
-            activeRoute.value = route;
-        };
-
-        const toggleGetOffAlarm = () => {
-            alarmActive.value = !alarmActive.value;
-        };
-
-        const simulatePlan = () => {
-            const locName = currentLocationDisplayName.value.split(' ')[0];
-            planResult.value = [
-                {
-                    operator: 'KMB',
-                    code: '102',
-                    tag: '最快到達',
-                    fare: 11.1,
-                    duration: 22,
-                    nextEta: '3 分鐘',
-                    discount: '配合 MTR/其他巴士可享 $2.0 八達通轉乘優惠'
-                },
-                {
-                    operator: 'CTB',
-                    code: '970',
-                    tag: '直達路線',
-                    fare: 12.8,
-                    duration: 28,
-                    nextEta: '7 分鐘',
-                    discount: null
+                } catch (e) {
+                    console.error('Leaflet Map Init Error:', e);
                 }
-            ];
-        };
+            };
 
-        const getOpColor = (operator) => {
-            switch(operator) {
-                case 'KMB': return 'bg-red-600';
-                case 'CTB': return 'bg-amber-400 text-slate-900 font-bold';
-                case 'GMB': return 'bg-emerald-600';
-                default: return 'bg-slate-700';
-            }
-        };
-
-        const getCrowdColor = (crowd) => {
-            switch(crowd) {
-                case '舒適': return 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400';
-                case '普通': return 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400';
-                case '繁忙': return 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400';
-                default: return 'bg-gray-100 text-gray-600';
-            }
-        };
-
-        watch([currentTab, activeRoute], () => {
-            nextTick(() => {
-                if (window.lucide) lucide.createIcons();
+            watch(viewMode, (newVal) => {
+                if (newVal === 'map') {
+                    nextTick(() => {
+                        initMap();
+                        if (leafletMap) leafletMap.invalidateSize();
+                    });
+                }
             });
-        });
 
-        onMounted(() => {
-            if (window.lucide) lucide.createIcons();
-            const loc = getCurrentLocationObj();
-            updateStopsForCoordinates(loc.lat, loc.lng, loc.name);
-            getUserLocation();
+            onMounted(() => {
+                startTimer();
+            });
 
-            setInterval(() => {
-                refreshETA();
-            }, 30000);
-        });
+            onUnmounted(() => {
+                if (timerInterval) clearInterval(timerInterval);
+            });
 
-        return {
-            isDark,
-            currentTab,
-            viewMode,
-            selectedOp,
-            searchQuery,
-            locationSearchQuery,
-            isRefreshing,
-            alarmActive,
-            gpsBlockedNotice,
-            trafficAlert,
-            presetLocations,
-            selectedPresetLocationIndex,
-            isLocating,
-            gpsStatusText,
-            gpsStatusClass,
-            userCustomLocation,
-            currentLocationDisplayName,
-            operators,
-            busStopsData,
-            filteredStops,
-            favorites,
-            activeRoute,
-            activeRouteDetailStops,
-            announcements,
-            destinationTarget,
-            planResult,
-            getOriginalIndex,
-            filterLocationByName,
-            getUserLocation,
-            toggleDarkMode,
-            switchMode,
-            changeLocation,
-            refreshETA,
-            isFavorite,
-            toggleFavorite,
-            openRouteDetail,
-            toggleGetOffAlarm,
-            simulatePlan,
-            getOpColor,
-            getCrowdColor
-        };
-    }
-}).mount('#app');
-</script>
+            return {
+                currentDirection,
+                selectedOp,
+                searchQuery,
+                viewMode,
+                isRefreshing,
+                autoRefreshTimer,
+                operators,
+                filteredStops,
+                activeRoute,
+                activeRouteStops,
+                setDirection,
+                getOperatorBadgeClass,
+                refreshETA,
+                openModal
+            };
+        }
+    }).mount('#app');
+    </script>
 </body>
 </html>
